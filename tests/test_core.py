@@ -140,11 +140,21 @@ def test_required_sample_size_negative_edge():
 
 # ── 裁決 ─────────────────────────────────────────────────────
 def test_verdict_negative_expectancy_is_gambling():
-    log = TradeLog([_make_trade(10)] * 5 + [_make_trade(-50)] * 20)
+    # 樣本足夠(>= 30 筆)+ 負期望 → 判賭博
+    log = TradeLog([_make_trade(10)] * 10 + [_make_trade(-50)] * 40)
     v = judge(log, n_bootstrap=1000)
     assert v.level == VerdictLevel.GAMBLING
     assert v.should_discourage
     assert any(rf.code == "negative_expectancy" for rf in v.red_flags)
+
+
+def test_verdict_small_sample_negative_is_insufficient_not_gambling():
+    # 樣本不足(< 30 筆)即使帳面為負,也不該武斷判賭博,應歸樣本不足。
+    # 這是修正後的行為:與「樣本不足無法判斷」的原則一致。
+    log = TradeLog([_make_trade(10)] * 5 + [_make_trade(-50)] * 15)
+    v = judge(log, n_bootstrap=1000)
+    assert v.level == VerdictLevel.INSUFFICIENT
+    assert v.should_discourage  # 仍勸阻重押
 
 
 def test_verdict_insufficient_sample():

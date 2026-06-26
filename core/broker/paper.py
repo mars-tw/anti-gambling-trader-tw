@@ -126,19 +126,41 @@ class PaperBroker(BrokerAdapter):
         return result
 
     def _apply_fill(self, symbol: str, signed_qty: float, price: float) -> None:
-        """更新持倉的加權平均成本。"""
+        """更新持倉的加權平均成本。
+
+        正確處理四種情形:
+          1. 無部位 / 部位已平 → 直接建立新部位
+          2. 同向加碼 → 加權平均成本
+          3. 反向減碼(未超量)→ 數量減少,均價不變
+          4. 反向超量(平舊倉並反手)→ 剩餘數量以「本次成交價」建立反向新部位
+             (這是先前的 bug:超量翻倉時若沿用舊均價,未實現損益與
+              停損停利會全部以錯誤的均價計算)
+        """
         pos = self._positions.get(symbol)
         if pos is None or pos.quantity == 0:
             self._positions[symbol] = Position(symbol, signed_qty, price, price)
             return
+
         new_qty = pos.quantity + signed_qty
+
+        # 完全平倉
         if new_qty == 0:
             pos.quantity = 0
+            pos.market_price = price
             return
-        # 同向加碼才更新均價;反向減碼維持原均價
-        if (pos.quantity > 0) == (signed_qty > 0):
+
+        same_direction = (pos.quantity > 0) == (signed_qty > 0)
+        if same_direction:
+            # 情形 2:同向加碼 → 加權平均
             total_cost = pos.avg_price * pos.quantity + price * signed_qty
             pos.avg_price = total_cost / new_qty
+        elif (new_qty > 0) == (pos.quantity > 0):
+            # 情形 3:反向減碼但未超量(方向不變)→ 均價維持原值
+            pass
+        else:
+            # 情形 4:反向超量(方向翻轉)→ 剩餘部位以本次成交價為新均價
+            pos.avg_price = price
+
         pos.quantity = new_qty
         pos.market_price = price
 

@@ -153,17 +153,21 @@ def compute_metrics(log: TradeLog) -> PerformanceMetrics:
     m.max_consecutive_losses = longest
 
     # ── 夏普 / 索提諾(以每筆交易報酬率計算,非年化)──
+    # 注意:這是「每筆交易」口徑,非年化。不同交易頻率的策略不可直接互比,
+    # 僅用於同一份紀錄內的相對風險衡量。
     n = len(returns)
     mean_ret = _safe_div(sum(returns), n)
     if n > 1:
         var = sum((r - mean_ret) ** 2 for r in returns) / (n - 1)
         std = math.sqrt(var)
         m.sharpe = _safe_div(mean_ret, std)
-        downside = [r for r in returns if r < 0]
-        if downside:
-            dvar = sum(r ** 2 for r in downside) / len(downside)
-            dstd = math.sqrt(dvar)
-            m.sortino = _safe_div(mean_ret, dstd)
+        # 下行偏差:標準定義的分母是「全部樣本數」,不是只有下行筆數。
+        # 用 len(downside) 當分母會系統性高估下行偏差、低估 Sortino,
+        # 且方向錯誤(好策略下行少、分母小,反而被壓低)。以 0 為門檻,
+        # 對每筆取 min(r, 0)^2,分母用 n-1 與夏普一致。
+        dvar = sum(min(r, 0.0) ** 2 for r in returns) / (n - 1)
+        dstd = math.sqrt(dvar)
+        m.sortino = _safe_div(mean_ret, dstd)
 
     # ── 交易風格 ──
     holding = [t.holding_days for t in trades]

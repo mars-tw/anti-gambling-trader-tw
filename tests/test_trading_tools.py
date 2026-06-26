@@ -54,6 +54,31 @@ def test_paper_broker_insufficient_funds():
     assert "資金不足" in r.message
 
 
+def test_paper_broker_reverse_flip_avg_price():
+    """反向超量平倉(平多翻空)時,新部位均價應為本次成交價(回歸測試)。"""
+    b = PaperBroker(cash=1e9, fee_rate=0, slippage=0)
+    b.set_price("AAPL", 100.0)
+    b.place_order(Order("AAPL", OrderSide.BUY, 100))   # +100 @ 100
+    b.set_price("AAPL", 200.0)
+    b.place_order(Order("AAPL", OrderSide.SELL, 150))  # 賣 150 → 淨 -50 空單
+    pos = b.get_positions()[0]
+    assert pos.quantity == -50
+    # 修正前的 bug:均價會沿用舊的 100;修正後應為本次成交價 200
+    assert abs(pos.avg_price - 200.0) < 1e-6
+
+
+def test_paper_broker_reverse_reduce_keeps_avg_price():
+    """反向減碼但未超量時,均價應維持原值。"""
+    b = PaperBroker(cash=1e9, fee_rate=0, slippage=0)
+    b.set_price("AAPL", 100.0)
+    b.place_order(Order("AAPL", OrderSide.BUY, 100))   # +100 @ 100
+    b.set_price("AAPL", 200.0)
+    b.place_order(Order("AAPL", OrderSide.SELL, 30))   # 賣 30 → 仍持 +70
+    pos = b.get_positions()[0]
+    assert pos.quantity == 70
+    assert abs(pos.avg_price - 100.0) < 1e-6   # 均價不變
+
+
 def test_paper_broker_requires_price():
     b = PaperBroker()
     try:

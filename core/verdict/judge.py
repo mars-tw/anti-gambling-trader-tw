@@ -163,36 +163,50 @@ def judge(
 
     # ── 決策樹(由最嚴重往下判斷)──────────────────────────
 
-    # A. 負期望值 → 直接判定賭博,無條件勸退
-    if m.expectancy < 0:
+    # A. 樣本不足 → 不論帳面好壞,都先承認「還不知道」。
+    #    這必須排在負期望之前:小樣本的負期望同樣可能只是運氣,
+    #    若直接判「賭博、方向錯誤、立刻停止」會與「樣本不足無法判斷」
+    #    的原則自相矛盾,且過度武斷。樣本足夠的負期望才判賭博(分支 B)。
+    if m.total_trades < min_trades:
+        level = VerdictLevel.INSUFFICIENT
+        discourage = True   # 樣本不足時也該勸阻「重押」
+        if m.expectancy < 0:
+            headline = (
+                f"⚠️ 樣本不足({m.total_trades} 筆):目前帳面為負"
+                f"(每筆 {m.expectancy:+.2f}),但樣本太少,還無法斷定是方法錯還是運氣差。"
+            )
+            reasons.append(
+                f"目前只有 {m.total_trades} 筆交易,帳面期望值為負。"
+                "但在這個樣本量下,負期望同樣可能只是隨機的壞運,尚不足以定論。"
+            )
+        else:
+            headline = (
+                f"⚠️ 樣本不足({m.total_trades} 筆,建議至少 {max(min_trades, req)} 筆):"
+                "現在還無法區分你是有本事,還是運氣好。"
+            )
+            reasons.append(
+                f"目前只有 {m.total_trades} 筆交易。在這個樣本量下,"
+                "再漂亮的勝率與獲利,都可能只是隨機波動。"
+            )
+        advice += [
+            f"在用小額(可承受全損的金額)累積到約 {max(min_trades, req)} 筆交易前,不要加大部位。",
+            "把每一筆交易的『進場理由』記錄下來(用 tag 欄位),日後才能驗證是哪套邏輯有效。",
+        ]
+
+    # B. 樣本足夠 + 負期望值 → 判定賭博,無條件勸退
+    elif m.expectancy < 0:
         level = VerdictLevel.GAMBLING
         discourage = True
         headline = "⛔ 這是賭博:你的策略期望值為負,長期下去數學上注定虧損。"
         reasons.append(
-            f"每筆交易平均損益為 {m.expectancy:+.2f}(已含成本)。"
-            "正期望值是任何可持續策略的最低門檻,而你目前是負的。"
+            f"在 {m.total_trades} 筆(已達判定門檻)交易下,每筆平均損益為 "
+            f"{m.expectancy:+.2f}(已含成本)。正期望值是任何可持續策略的最低門檻,"
+            "而你目前是負的。"
         )
         advice += [
             "立刻停止用真金白銀執行這套方法 — 它不是『還沒成功』,而是『方向錯誤』。",
             "若帳面曾經賺錢,那是運氣,不是本事;運氣會均值回歸。",
             "回到紙上模擬,先找到『期望值為正』的進出場規則,再談下一步。",
-        ]
-
-    # B. 樣本不足 → 不論帳面好壞,都先承認「還不知道」
-    elif m.total_trades < min_trades:
-        level = VerdictLevel.INSUFFICIENT
-        discourage = True   # 樣本不足時也該勸阻「重押」
-        headline = (
-            f"⚠️ 樣本不足({m.total_trades} 筆,建議至少 {max(min_trades, req)} 筆):"
-            "現在還無法區分你是有本事,還是運氣好。"
-        )
-        reasons.append(
-            f"目前只有 {m.total_trades} 筆交易。在這個樣本量下,"
-            "再漂亮的勝率與獲利,都可能只是隨機波動。"
-        )
-        advice += [
-            f"在用小額(可承受全損的金額)累積到約 {max(min_trades, req)} 筆交易前,不要加大部位。",
-            "把每一筆交易的『進場理由』記錄下來(用 tag 欄位),日後才能驗證是哪套邏輯有效。",
         ]
 
     # C. 樣本夠,但統計檢定過不了 → 帳面賺錢疑似運氣

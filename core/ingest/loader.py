@@ -288,8 +288,11 @@ def load_trades(
 
             # 成本處理:使用者沒給 fees 且開啟自動估算時,補上估計成本
             if fees is None and auto_estimate_costs and entry_price and quantity:
+                # 當沖判定:進出場為同一日曆日(台股當沖證交稅減半)
+                is_day_trade = entry_time.date() == exit_time.date()
                 fees = estimate_round_trip_cost(
-                    market, side, entry_price, exit_price, quantity
+                    market, side, entry_price, exit_price, quantity,
+                    is_day_trade=is_day_trade,
                 )
             fees = fees or 0.0
 

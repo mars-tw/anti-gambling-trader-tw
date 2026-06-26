@@ -62,9 +62,19 @@ def render(candles, markers, equity, out_html="chart.html", title="我的交易�
         "equity": [{"time": e["time"], "value": e["value"]} for e in equity],
         "title": title,
     }
-    html = _TEMPLATE.replace("__PAYLOAD__", json.dumps(payload, ensure_ascii=False))
+    html = _TEMPLATE.replace("__PAYLOAD__", _safe_json(payload))
     Path(out_html).write_text(html, encoding="utf-8")
     return out_html
+
+
+def _safe_json(payload):
+    """把資料序列化成可安全嵌入 <script> 的 JSON。
+
+    json.dumps 不會跳脫 < > &,若 title 或標的名含 "</script>" 會提前
+    閉合 script 區塊造成 XSS。這裡把這些字元轉成 unicode escape。
+    """
+    s = json.dumps(payload, ensure_ascii=False)
+    return s.replace("<", "\\\\u003c").replace(">", "\\\\u003e").replace("&", "\\\\u0026")
 
 
 _TEMPLATE = """<!doctype html><html lang=\\"zh-Hant\\"><head><meta charset=\\"utf-8\\">
@@ -208,9 +218,15 @@ def render(candles, markers, equity, out_html="chart.html", title="我的交易�
         "times": times, "ohlc": ohlc, "marks": mark_points,
         "equity": [[e["time"], e["value"]] for e in equity], "title": title,
     }
-    html = _TEMPLATE.replace("__PAYLOAD__", json.dumps(payload, ensure_ascii=False))
+    html = _TEMPLATE.replace("__PAYLOAD__", _safe_json(payload))
     Path(out_html).write_text(html, encoding="utf-8")
     return out_html
+
+
+def _safe_json(payload):
+    """把資料序列化成可安全嵌入 <script> 的 JSON(跳脫 < > & 防 XSS)。"""
+    s = json.dumps(payload, ensure_ascii=False)
+    return s.replace("<", "\\\\u003c").replace(">", "\\\\u003e").replace("&", "\\\\u0026")
 
 
 _TEMPLATE = """<!doctype html><html lang=\\"zh-Hant\\"><head><meta charset=\\"utf-8\\">

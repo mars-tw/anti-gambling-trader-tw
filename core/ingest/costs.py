@@ -71,6 +71,12 @@ DEFAULT_COST_MODELS: dict[Market, CostModel] = {
 }
 
 
+# 台股現股當沖證交稅減半(0.3% → 0.15%)。此優惠自 2017 年起多次延長,
+# 截至 2026 年仍有效。當沖者的成本若用全額稅率會被高估一倍,可能讓原本
+# 打平的當沖被誤判為虧損 / 負期望 → 誤觸賭博裁決,與工具宗旨衝突。
+TW_DAY_TRADE_TAX_RATE = 0.0015
+
+
 def estimate_round_trip_cost(
     market: Market,
     side: Side,
@@ -78,13 +84,27 @@ def estimate_round_trip_cost(
     exit_price: float,
     quantity: float,
     model: CostModel | None = None,
+    *,
+    is_day_trade: bool = False,
 ) -> float:
     """估算一筆「完整來回」交易的總成本(進場 + 出場)。
 
     做多:買進(進場,不收稅)→ 賣出(出場,收稅)
     做空:賣出(進場,收稅)→ 買回(出場,不收稅)
+
+    Args:
+        is_day_trade: 是否為當沖(進出場同一交易日)。台股當沖證交稅減半。
     """
     m = model or DEFAULT_COST_MODELS.get(market, DEFAULT_COST_MODELS[Market.UNKNOWN])
+
+    # 台股當沖:證交稅減半。複製一份模型,只調整稅率,不動其他參數。
+    if is_day_trade and market == Market.TW_STOCK and m.tax_rate > TW_DAY_TRADE_TAX_RATE:
+        m = CostModel(
+            commission_rate=m.commission_rate,
+            commission_min=m.commission_min,
+            tax_rate=TW_DAY_TRADE_TAX_RATE,
+            slippage_rate=m.slippage_rate,
+        )
 
     if side == Side.LONG:
         entry_cost = m.estimate(entry_price, quantity, is_sell=False)

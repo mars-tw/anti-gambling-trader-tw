@@ -58,7 +58,15 @@ def render_text_report(
     L.append(f"  Bootstrap p 值        : {sig.p_value_bootstrap:.4f}")
     verdict_word = "顯著為正(像真優勢)" if sig.is_significant else "不顯著(無法排除是運氣)"
     L.append(f"  結論                  : {verdict_word}")
-    L.append(f"  建議最少交易筆數      : {verdict.required_trades}(目前 {m.total_trades})")
+    # 負期望時,「需要多少樣本」沒有意義(再多樣本也無法把負期望變成優勢),
+    # 不應把內部哨兵值(如 9999)直接印給使用者。
+    if m.expectancy <= 0:
+        L.append(
+            "  建議最少交易筆數      : 不適用 — 期望值為負,"
+            "問題不在筆數,而在方法;再多交易也無法變成優勢"
+        )
+    else:
+        L.append(f"  建議最少交易筆數      : {verdict.required_trades}(目前 {m.total_trades})")
     L.append("")
 
     # ── 賭博警訊 ──

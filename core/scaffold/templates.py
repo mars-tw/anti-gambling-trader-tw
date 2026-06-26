@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import json as _json
+
 
 def readme(opts, chart_lib, broker_tmpl, discouraged: bool, verdict_headline: str) -> str:
     broker_name = broker_tmpl.name if broker_tmpl else "紙上模擬 PaperBroker(預設)"
@@ -47,12 +49,15 @@ python main.py            # 用 PaperBroker 跑一遍,並產生圖表
 {opts.project_name}/
   main.py            # 主程式（預設紙上模擬）
   strategy.py        # 你的交易規則（進出場條件待你填寫）
+  broker_lib.py      # 自包含的券商函式庫（交易介面 + PaperBroker，零外部相依）
   broker_setup.py    # 選擇 / 建立券商連接器
   brokers/           # 真實券商範例框架（待填 API key 與實作）
   charting.py        # 圖表模組（{chart_lib.name}）
   data_feed.py       # 資料來源（回測 / 即時）
   config.example.yaml # 設定範本（複製成 config.yaml 後填入）
 ```
+
+> 本專案**自包含**：不需安裝反詐投資王本體即可獨立執行。
 
 ## 接你自己的券商
 
@@ -100,7 +105,7 @@ def config_yaml(opts, discouraged: bool, verdict_level: str) -> str:
 
 market: {opts.market}
 symbols:
-{chr(10).join(f'  - "{s}"' for s in opts.symbols)}
+{chr(10).join(f'  - {_json.dumps(s, ensure_ascii=False)}' for s in opts.symbols)}
 
 broker: {opts.broker}        # paper | binance | ibkr | alpaca | shioaji
 
@@ -141,7 +146,13 @@ def requirements(chart_lib, broker_tmpl) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _safe_docstring(text: str) -> str:
+    """消毒要嵌入三引號 docstring 的文字,避免破壞字串或注入。"""
+    return str(text).replace("\\", "").replace('"""', "”””").replace("'''", "’’’")
+
+
 def strategy_py(opts, discouraged: bool, verdict_level: str, verdict_headline: str) -> str:
+    verdict_headline = _safe_docstring(verdict_headline)
     return f'''"""你的交易策略 —— 進出場規則待你填寫。
 
 反詐投資王裁決:{verdict_level}
@@ -225,7 +236,7 @@ def broker_setup_py(opts, broker_tmpl) -> str:
 
     return f'''"""券商選擇:預設紙上模擬,接真實券商時改這裡。"""
 
-from core.broker import PaperBroker
+from broker_lib import PaperBroker
 {extra_import}
 
 def build_broker(config: dict):
@@ -270,7 +281,9 @@ def load_history(symbol: str, n: int = 120) -> list:
 
 
 def main_py(opts, chart_lib, broker_tmpl, discouraged: bool) -> str:
-    allow_live = "False" if discouraged else "False"  # 一律預設 False,安全優先
+    # 真實下單一律預設關閉(安全優先),與裁決無關 —— 即使裁決為「具優勢」,
+    # 也要使用者親手把這個常數改成 True,逼他停下來想清楚。
+    allow_live = "False"
     out_ext = "png" if chart_lib.key == "mplfinance" else "html"
     out_arg = "out_png" if chart_lib.key == "mplfinance" else "out_html"
     return f'''"""主程式 —— 預設用紙上模擬跑一遍策略,並產生圖表。
@@ -288,8 +301,7 @@ from strategy import Strategy
 from broker_setup import build_broker
 from data_feed import load_history
 from charting import render
-from core.broker import Order, OrderSide
-from core.broker.base import BrokerAdapter
+from broker_lib import Order, OrderSide, BrokerAdapter
 
 # ── 真實下單總開關(預設關閉,保護你的錢)──
 ALLOW_LIVE_TRADING = {allow_live}
@@ -299,7 +311,7 @@ def load_config(path: str = "config.yaml") -> dict:
     if not os.path.exists(path):
         # 沒有 config.yaml 時用內建預設(紙上模擬)
         return {{
-            "market": "{opts.market}",
+            "market": {opts.market!r},
             "symbols": {opts.symbols!r},
             "broker": "paper",
             "paper": {{"starting_cash": 1_000_000, "fee_rate": 0.001}},
@@ -310,23 +322,40 @@ def load_config(path: str = "config.yaml") -> dict:
         return yaml.safe_load(f)
 
 
-def maybe_enable_live(broker: BrokerAdapter) -> None:
-    """若使用者明確開啟真實下單,解除安全閘門;否則維持封鎖。"""
-    if getattr(broker, "is_live", False):
-        if not ALLOW_LIVE_TRADING:
-            raise SystemExit(
-                "⛔ 偵測到真實券商,但 ALLOW_LIVE_TRADING 為 False。\\n"
-                "   這是保護你的錢。確認策略已驗證、願意自負風險後,\\n"
-                "   再把 main.py 的 ALLOW_LIVE_TRADING 改成 True。"
-            )
-        broker.confirm_live_trading(i_understand_the_risk=True)
+def maybe_enable_live(broker: BrokerAdapter, config: dict) -> None:
+    """若使用者明確開啟真實下單,解除安全閘門;否則維持封鎖。
+
+    兩道彼此獨立的閘門都通過才會放行:
+      1. main.py 的 ALLOW_LIVE_TRADING 常數(要手動改成 True)
+      2. config.yaml 的 risk.i_have_read_disclaimer 設為 true
+    這樣「改一個常數」無法單獨解鎖,逼你在兩個不同地方都明確表態。
+    """
+    if not getattr(broker, "is_live", False):
+        return  # 紙上模擬,無需解鎖
+
+    if not ALLOW_LIVE_TRADING:
+        raise SystemExit(
+            "⛔ 偵測到真實券商,但 ALLOW_LIVE_TRADING 為 False。\\n"
+            "   這是保護你的錢。確認策略已驗證、願意自負風險後,\\n"
+            "   再把 main.py 的 ALLOW_LIVE_TRADING 改成 True。"
+        )
+
+    if not config.get("risk", {{}}).get("i_have_read_disclaimer", False):
+        raise SystemExit(
+            "⛔ 真實下單的第二道閘門未解除。\\n"
+            "   請先閱讀免責聲明,並在 config.yaml 的 risk 區塊加上:\\n"
+            "       i_have_read_disclaimer: true\\n"
+            "   兩道閘門刻意分開,確保你不是只改了一個地方就誤觸真錢下單。"
+        )
+
+    broker.confirm_live_trading(i_understand_the_risk=True)
 
 
 def run():
     config = load_config()
     broker = build_broker(config)
     broker.connect()
-    maybe_enable_live(broker)
+    maybe_enable_live(broker, config)
 
     strategy = Strategy(config)
     symbols = config.get("symbols", {opts.symbols!r})
@@ -378,7 +407,7 @@ def run():
     print("=" * 50)
 
     out = render(candles_for_chart, all_markers, equity_curve,
-                 {out_arg}="chart.{out_ext}", title="{opts.project_name}")
+                 {out_arg}="chart.{out_ext}", title={opts.project_name!r})
     print(f"  圖表已產生: {{out}}")
     if getattr(broker, "is_live", False):
         print("  ⚠️ 這是真實下單模式,以上為真實訂單結果。")

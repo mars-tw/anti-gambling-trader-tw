@@ -63,6 +63,12 @@ def build_preview_page(out_html: str = "chart_preview.html") -> str:
         {"candles": candles, "markers": markers, "equity": equity},
         ensure_ascii=False,
     )
+    # 嵌入 <script> 前跳脫 < > &,避免內容含 "</script>" 時提前閉合(防 XSS)
+    data_json = (
+        data_json.replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
 
     cards = []
     for lib in list_chart_libs():

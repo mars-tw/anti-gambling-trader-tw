@@ -41,7 +41,7 @@ _BINANCE = BrokerTemplate(
     ),
     code='''"""Binance 券商連接器(範例框架 — 請填入你的實作)。"""
 
-from core.broker.base import (
+from broker_lib import (
     AccountInfo, BrokerAdapter, Order, OrderResult, OrderSide, OrderType, Position,
 )
 
@@ -122,7 +122,7 @@ _IBKR = BrokerTemplate(
     ),
     code='''"""Interactive Brokers 券商連接器(範例框架 — 請填入你的實作)。"""
 
-from core.broker.base import (
+from broker_lib import (
     AccountInfo, BrokerAdapter, Order, OrderResult, OrderSide, OrderType, Position,
 )
 
@@ -194,7 +194,7 @@ _ALPACA = BrokerTemplate(
     notes="Alpaca 提供 paper trading 端點,測試時把 paper=True 即可用模擬帳戶。",
     code='''"""Alpaca 券商連接器(範例框架 — 請填入你的實作)。"""
 
-from core.broker.base import (
+from broker_lib import (
     AccountInfo, BrokerAdapter, Order, OrderResult, OrderSide, OrderType, Position,
 )
 
@@ -261,7 +261,7 @@ _SHIOAJI = BrokerTemplate(
     ),
     code='''"""永豐 Shioaji 券商連接器(範例框架 — 請填入你的實作)。"""
 
-from core.broker.base import (
+from broker_lib import (
     AccountInfo, BrokerAdapter, Order, OrderResult, OrderSide, OrderType, Position,
 )
 
