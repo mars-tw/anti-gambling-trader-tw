@@ -254,7 +254,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # ── scam-check:投資詐騙風險自我檢測 ──
     sub.add_parser(
         "scam-check",
-        help="互動式檢測你是否遇到投資詐騙(假飆股群/假名師/保證獲利/誊騙幣)",
+        help="互動式檢測你是否遇到投資詐騙(假飆股群/假名師/保證獲利/詐騙幣)",
     )
 
     # ── demo:零參數,一行看效果 ──
