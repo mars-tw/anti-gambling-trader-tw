@@ -5,15 +5,17 @@
 以免在交易者尚未準備好時誤觸真錢下單。
 
 涵蓋:
-  - Binance (加密貨幣)
-  - Interactive Brokers (美股 / 全球)
-  - Alpaca (美股,API 友善)
-  - 富邦新一代 API / 永豐 Shioaji (台股)
+  台股:永豐 Shioaji、元大 SPARK、富邦新一代、凱基 KGI SUPER PY、
+        群益/統一/元富 期貨類
+  美股:Interactive Brokers、Alpaca、Tradier
+  加密貨幣:Binance、OKX、Bybit、ccxt(統一接 100+ 交易所)
 所有範本都繼承本套件的 BrokerAdapter,因此可直接替換 PaperBroker。
+(台股與其他市場的範本分別放在 registry_tw.py 與 registry_more.py。)
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -27,6 +29,16 @@ class BrokerTemplate:
     sdk_install: str     # 安裝指令
     notes: str           # 重點提醒(尤其是「建立唯讀/受限 key」之類的安全提醒)
     code: str            # 範例程式碼(可寫入 .py)
+
+    @property
+    def class_name(self) -> str:
+        """從範例程式碼自動抓出 Broker 類別名(如 YuantaBroker)。
+
+        這樣新增券商範本時,不必在別處(如 scaffold 範本)同步維護
+        key→類別名 的對照表,避免漏改造成 KeyError。
+        """
+        m = re.search(r"class\s+(\w+)\s*\(\s*BrokerAdapter\s*\)", self.code)
+        return m.group(1) if m else f"{self.key.title()}Broker"
 
 
 # ── Binance ───────────────────────────────────────────────
@@ -322,8 +334,19 @@ class ShioajiBroker(BrokerAdapter):
 )
 
 
+def _all_templates() -> list[BrokerTemplate]:
+    """彙整所有券商範本(內建 + 台股 + 其他市場)。
+
+    台股與其他市場的範本放在獨立模組,避免本檔過度膨脹;在此延遲匯入合併。
+    """
+    base = [_BINANCE, _IBKR, _ALPACA, _SHIOAJI]
+    from .registry_tw import TW_BROKER_TEMPLATES
+    from .registry_more import MORE_BROKER_TEMPLATES
+    return base + TW_BROKER_TEMPLATES + MORE_BROKER_TEMPLATES
+
+
 BROKER_TEMPLATES: dict[str, BrokerTemplate] = {
-    t.key: t for t in (_BINANCE, _IBKR, _ALPACA, _SHIOAJI)
+    t.key: t for t in _all_templates()
 }
 
 

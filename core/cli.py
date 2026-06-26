@@ -28,6 +28,12 @@ def _force_utf8_stdout() -> None:
                 pass
 
 
+def _broker_choices() -> list[str]:
+    """scaffold --broker 的可選值:paper + 註冊表所有券商(動態取得)。"""
+    from .broker import BROKER_TEMPLATES
+    return ["paper"] + list(BROKER_TEMPLATES.keys())
+
+
 def _examples_dir() -> Path:
     """用 __file__ 定位 examples/,不依賴使用者的 cwd。"""
     return Path(__file__).resolve().parent.parent / "examples"
@@ -211,9 +217,9 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("--name", default="my_trading_bot", help="專案名稱")
     s.add_argument(
         "--broker",
-        choices=["paper", "binance", "ibkr", "alpaca", "shioaji"],
+        choices=_broker_choices(),
         default="paper",
-        help="券商(預設 paper 紙上模擬,不碰真錢)",
+        help="券商(預設 paper 紙上模擬,不碰真錢;用 brokers 指令看完整清單)",
     )
     s.add_argument(
         "--chart",

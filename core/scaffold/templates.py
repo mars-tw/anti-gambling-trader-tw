@@ -220,8 +220,8 @@ def broker_setup_py(opts, broker_tmpl) -> str:
     )'''
         extra_import = ""
     else:
-        cls = {"binance": "BinanceBroker", "ibkr": "IBKRBroker",
-               "alpaca": "AlpacaBroker", "shioaji": "ShioajiBroker"}[broker_tmpl.key]
+        # 從範本自動取得類別名,新增券商不必在此維護對照表
+        cls = broker_tmpl.class_name
         extra_import = f"# from brokers.{broker_tmpl.key}_broker import {cls}\n"
         body = f'''    # 預設仍回傳紙上模擬;要接真實券商,取消下面註解並填入你的金鑰。
     if config.get("broker") == "{broker_tmpl.key}":

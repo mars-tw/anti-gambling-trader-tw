@@ -145,15 +145,26 @@ python -m core.cli scaffold --name my_bot --broker binance --chart lightweight \
 cd my_bot && pip install -r requirements.txt && python main.py
 ```
 
-**可選券商**（你自己接入 API，填 key 與下單實作）：
+**可選券商**（你自己接入 API，填 key 與下單實作；執行 `brokers` 指令看完整清單）：
 
 | key | 券商 | 市場 |
 |-----|------|------|
 | `paper` | 紙上模擬（預設，完整可用、不碰真錢） | 全 |
-| `binance` | Binance | 加密貨幣 |
+| `shioaji` | 永豐 Shioaji | 台股 |
+| `yuanta` | 元大 SPARK API | 台股 / 期貨 |
+| `fubon` | 富邦新一代 API | 台股 / 複委託 |
+| `kgi` | 凱基 KGI SUPER PY | 台股 + 美股 |
+| `tw_futures` | 群益 / 統一 / 元富 期貨類 | 台期 |
 | `ibkr` | Interactive Brokers | 美股 / 全球 |
 | `alpaca` | Alpaca | 美股 |
-| `shioaji` | 永豐 Shioaji | 台股 |
+| `tradier` | Tradier（REST API） | 美股 |
+| `binance` | Binance | 加密貨幣 |
+| `okx` | OKX | 加密貨幣 |
+| `bybit` | Bybit | 加密貨幣 |
+| `ccxt` | ccxt（一個介面接 100+ 交易所） | 加密貨幣 |
+
+> 台灣券商 API 多需臨櫃簽署風險預告書、申請審核（常需數個工作天），
+> 部分需安裝憑證或元件。各範本的說明已標注關鍵前置條件，實際以券商官方文件為準。
 
 **可選開源圖表庫**：`lightweight`（TradingView，Apache-2.0）、`plotly`（MIT）、
 `mplfinance`（BSD）、`echarts`（Apache-2.0）。

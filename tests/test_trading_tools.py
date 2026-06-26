@@ -160,7 +160,30 @@ def test_chart_preview_generates():
 
 def test_brokers_registered():
     keys = {t.key for t in list_brokers()}
-    assert keys == {"binance", "ibkr", "alpaca", "shioaji"}
+    # 至少要涵蓋這些(台股 / 美股 / 加密貨幣各有代表);未來可再擴充
+    expected = {
+        "binance", "ibkr", "alpaca", "shioaji",          # 原有
+        "yuanta", "fubon", "kgi", "tw_futures",          # 台股新增
+        "ccxt", "okx", "bybit", "tradier",               # 其他市場新增
+    }
+    assert expected <= keys
+
+
+def test_all_broker_templates_valid_python():
+    """每個券商範本都必須是合法 Python,且能抓出 Broker 類別名。"""
+    import ast
+    from core.broker import BROKER_TEMPLATES
+    for key, t in BROKER_TEMPLATES.items():
+        ast.parse(t.code)                       # 語法正確(會 raise 若錯)
+        assert t.class_name.endswith("Broker"), f"{key} class_name 異常"
+        assert "from broker_lib import" in t.code  # 自包含 import
+
+
+def test_scaffold_new_broker_no_keyerror():
+    """新增券商(如元大)產生專案時不應 KeyError(回歸測試)。"""
+    opts = ScaffoldOptions(project_name="t", broker="yuanta", market="tw_stock")
+    rels = {f.relpath for f in generate_project(opts)}
+    assert "brokers/yuanta_broker.py" in rels
 
 
 # ── 腳架產生器 ───────────────────────────────────────────────

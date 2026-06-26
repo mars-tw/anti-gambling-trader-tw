@@ -5,8 +5,9 @@ description: >-
   使用者的獲利是「可重複的優勢(edge)」還是「運氣 + 倖存者偏差(賭博)」。
   自動計算勝率、盈虧比、期望值、最大回撤、夏普值,做顯著性檢定與樣本外驗證,
   反推交易邏輯並產生『可回測』的策略骨架。若判定不適合長期投資,會明確勸退。
-  也能用互動式腳架,為交易者產生一整套屬於自己的交易程式專案(可選 Binance/
-  IBKR/Alpaca/永豐 等券商範例框架 + Lightweight Charts/Plotly/mplfinance/ECharts
+  也能用互動式腳架,為交易者產生一整套屬於自己的交易程式專案(可選 13 種券商:
+  台股的永豐/元大/富邦/凱基/群益等、美股的 IBKR/Alpaca/Tradier、加密貨幣的
+  Binance/OKX/Bybit/ccxt + Lightweight Charts/Plotly/mplfinance/ECharts
   開源圖表),預設紙上模擬、真實下單受安全閘門保護。
   當使用者提到:分析我的交易、我的策略賺不賺、這是不是賭博、勝率盈虧比、
   回測、交易紀錄、對帳單分析、建立 / 產生我的交易程式、接券商 API、
@@ -116,7 +117,14 @@ description: >-
    請使用者用瀏覽器打開,從四種開源圖表庫挑一個喜歡的(每個樣式下方有對應的 `--chart` key)。
 
 2. **確認券商與標的**。用 `python -m core.cli brokers` / `charts` 列出選項。
-   券商可選:`paper`(預設,紙上模擬)、`binance`、`ibkr`、`alpaca`、`shioaji`。
+   券商可選(共 13 種,以 `brokers` 指令為準):
+   - 台股:`shioaji`(永豐)、`yuanta`(元大)、`fubon`(富邦)、`kgi`(凱基)、
+     `tw_futures`(群益/統一/元富 期貨)
+   - 美股:`ibkr`、`alpaca`、`tradier`
+   - 加密貨幣:`binance`、`okx`、`bybit`、`ccxt`(一個介面接 100+ 交易所)
+   - 預設 `paper`(紙上模擬,不碰真錢)。
+   提醒使用者:台灣券商 API 多需臨櫃簽署、申請審核(數個工作天),
+   且範本是「待填框架」,實作以券商官方文件為準。
 
 3. **(建議)若使用者有交易紀錄,先分析再產生**,把裁決嵌入專案:
    ```bash
