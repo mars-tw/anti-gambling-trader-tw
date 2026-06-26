@@ -42,19 +42,26 @@ description: >-
 
 ## 核心流程
 
+0. **沒有資料、想先看效果**:`python -m core.cli demo`(賭博範例)或
+   `demo --edge`(具優勢範例)。**不知道格式**:`python -m core.cli init-template`
+   產生空白中文表頭 CSV,使用者照填後即可分析。當使用者說「幫我看效果 /
+   給我空白範本」時引導這兩個指令。
+
 1. **確認資料檔位置與格式**。支援 `.csv` / `.json` / `.xlsx`。
    欄位名稱可中可英,工具會自動辨識(代號、方向、進出場時間/價、數量、損益、策略標籤)。
-   若自動辨識失敗,請使用者提供欄位對應。
+   台股「張」單位會自動 ×1000 換算為股。若自動辨識失敗,用 `--field` 手動對應。
 
 2. **執行分析**。在專案根目錄(含 `core/` 的那層)執行:
 
    ```bash
    python -m core.cli analyze <檔案路徑> [--market tw_stock|us_stock|crypto] \
-       [--framework backtrader|vectorbt|generic] \
-       [--json 結果.json] [--strategy 策略骨架.py]
+       [--field 標準名=你的欄位名 ...] [--framework backtrader|vectorbt|generic] \
+       [--json 結果.json] [--strategy 策略骨架.py] [--no-cost-estimate] [--bootstrap N]
    ```
 
+   - 也可用 `--example tw|us|crypto` 直接分析內建範例(不必有自己的資料)。
    - `--market`:若整份紀錄同屬一個市場,指定可提升準確度(否則自動推斷)。
+   - `--field`:自動辨識失敗時的逃生口,如 `--field symbol=代號 --field entry_price=買價`。
    - `--strategy`:輸出可回測的策略骨架 `.py`。
    - exit code:`0` = 具優勢;`2` = 應勸退;`1` = 錯誤。
 
@@ -159,8 +166,16 @@ result = analyze_file("trades.csv", market_hint=Market.CRYPTO, framework="vector
 print(result.text_report)          # 完整中文報告
 print(result.verdict.level)        # 裁決等級
 print(result.verdict.should_discourage)  # 是否勸退
+print(result.tag_verdicts)         # 逐策略裁決(哪一招在送錢)
+print(result.follow_guru)          # 跟單/聽明牌的專屬裁決(可能為 None)
+print(result.counterfactual)       # 砍掉最差策略的反事實(可能為 None)
 result_dict = result.as_dict()     # 結構化結果(可轉 JSON)
 ```
+
+`as_dict()` 的 JSON 含:`verdict`(其 `required_trades` 在負期望時為 `None`,
+不洩漏內部哨兵)、`profile`、`out_of_sample`、`tag_verdicts`、`follow_guru`。
+注意:**反事實(counterfactual)與轉正數字(breakeven)只在 `text_report` 文字版**,
+未進 `as_dict`;需要結構化資料時請直接讀 `result.counterfactual`。
 
 ## 依賴
 

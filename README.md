@@ -189,24 +189,32 @@ core/
   cli.py               # 命令列介面
   report.py            # 中文報告產生器
   ingest/              # 匯入層：CSV/JSON/Excel 自動辨識 + 三市場成本模型 + API 連接器
-  metrics/             # 績效指標計算
-  verdict/             # 統計裁決引擎（反賭博核心）+ 顯著性檢定
-  strategy/            # 交易模式反推 + 策略骨架產生
+  metrics/             # 績效指標計算（performance / breakeven 轉正數字）
+  verdict/             # 統計裁決引擎（反賭博核心）+ 顯著性檢定（真正的 t 分布）
+  strategy/            # 交易模式反推 + 策略骨架 + per_tag 逐策略裁決/反事實/跟單抽算
   backtest/            # 樣本外驗證
-  broker/              # 券商下單抽象層 + PaperBroker + 真實券商範例框架
+  antiscam/            # 反詐核心：詐騙特徵庫 + scam-check 檢測 + 受害軌跡偵測
+  broker/              # 券商抽象層 + PaperBroker + 13 種券商範本（registry / _tw / _more）
   charts/              # 四種開源圖表庫範本 + 樣式預覽介面
-  scaffold/            # 互動式個人交易程式專案產生器
+  scaffold/            # 個人交易程式專案產生器（產出自包含 broker_lib）
 .claude/skills/anti-gambling-trader/SKILL.md   # Claude Code 技能包裝
 examples/              # 三市場範例資料
-tests/                 # 單元測試（test_core.py + test_trading_tools.py）
+tests/                 # 單元測試（test_core / test_trading_tools / test_antiscam
+                       #            / test_usability / test_engine）
 ```
 
 ## 測試
 
 ```bash
-python tests/test_core.py        # 內建簡易執行器，無需 pytest
-# 或
+# 用 pytest 一次跑全部（推薦）
 python -m pytest tests/ -v
+
+# 不裝 pytest 時，每個檔有內建執行器，需逐一執行：
+python tests/test_core.py
+python tests/test_trading_tools.py
+python tests/test_antiscam.py
+python tests/test_usability.py
+python tests/test_engine.py
 ```
 
 ## 作者
