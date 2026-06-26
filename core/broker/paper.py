@@ -23,6 +23,10 @@ from .base import (
 class PaperBroker(BrokerAdapter):
     """以記憶體模擬的紙上券商。
 
+    注意:本模擬只支援『做多』(買進後賣出平倉)。不支援裸放空 ——
+    放空牽涉保證金、借券費、強制平倉等,正確模型化太複雜;與其給出錯誤的
+    現金/權益數字,本模擬選擇在賣出超過持有部位時直接拒單。
+
     Args:
         cash:        起始資金
         fee_rate:    每筆成交的手續費率(模擬交易成本)
@@ -103,12 +107,30 @@ class PaperBroker(BrokerAdapter):
         fee = abs(notional) * self._fee_rate
 
         signed_qty = order.quantity if order.side == OrderSide.BUY else -order.quantity
-        cost = notional + fee if order.side == OrderSide.BUY else -notional + fee
 
-        if order.side == OrderSide.BUY and cost > self._cash:
-            return OrderResult(
-                ok=False, message=f"資金不足:需 {cost:,.2f},現金 {self._cash:,.2f}"
-            )
+        if order.side == OrderSide.BUY:
+            # 買進:扣現金(含手續費)
+            cost = notional + fee
+            if cost > self._cash:
+                return OrderResult(
+                    ok=False, message=f"資金不足:需 {cost:,.2f},現金 {self._cash:,.2f}"
+                )
+        else:
+            # 賣出:本紙上模擬只支援做多(平多倉),不支援裸放空。
+            # 裸放空牽涉保證金、借券費、強制平倉等,正確模型化太複雜;
+            # 與其給出錯誤的現金/權益數字,不如誠實拒單。
+            held = self._positions.get(order.symbol)
+            held_qty = held.quantity if held else 0.0
+            if order.quantity > held_qty + 1e-9:
+                return OrderResult(
+                    ok=False,
+                    message=(
+                        f"賣出數量 {order.quantity:g} 超過持有部位 {held_qty:g}。"
+                        "本紙上模擬只支援做多(不支援裸放空)。"
+                    ),
+                )
+            # 平多倉:回收賣出金額,扣手續費
+            cost = -notional + fee
 
         self._cash -= cost
         self._apply_fill(order.symbol, signed_qty, fill_price)

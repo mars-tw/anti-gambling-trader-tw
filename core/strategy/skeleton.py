@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 from .profiler import StrategyProfile
-from ..verdict.judge import Verdict, VerdictLevel
+from ..verdict.judge import Verdict
 
 
 def _verdict_banner(verdict: Verdict) -> str:

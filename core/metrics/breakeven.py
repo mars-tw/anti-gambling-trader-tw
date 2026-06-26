@@ -66,9 +66,11 @@ def compute_break_even(metrics: PerformanceMetrics) -> BreakEvenTargets:
     # ── 固定盈虧比,要轉正所需的最低勝率 ──
     # E = 0 → win_rate* × avg_win = (1 − win_rate*) × avg_loss
     #     → win_rate* = avg_loss / (avg_win + avg_loss)
+    # 實務上勝率很難超過 ~90%;若所需勝率高到不切實際,當作結構性無解,
+    # 別給「衝到 99% 勝率」這種誤導目標。
     if avg_win + avg_loss > 0:
         req_wr = avg_loss / (avg_win + avg_loss)
-        if req_wr < 1.0:
+        if req_wr < 0.9:
             t.required_win_rate = req_wr
             t.win_rate_gap = req_wr - win_rate
             t.messages.append(
@@ -76,10 +78,10 @@ def compute_break_even(metrics: PerformanceMetrics) -> BreakEvenTargets:
                 f"提高到 {req_wr:.0%}(差 {t.win_rate_gap * 100:.0f} 個百分點)才會轉正。"
             )
         else:
-            # 需要 ≥100% 勝率才轉正 → 結構性無解
+            # 需要過高勝率才轉正(≥90%)→ 結構性無解
             t.structurally_hard = True
             t.messages.append(
-                "以你目前的盈虧比,就算勝率拉到接近 100% 也救不了 —— "
+                f"以你目前的盈虧比,要轉正得有近 {req_wr:.0%} 的勝率,實務上幾乎不可能 —— "
                 "問題出在『賺太少賠太多』的結構,必須提高盈虧比(減少虧損、增加獲利)。"
             )
 
@@ -101,19 +103,18 @@ def compute_break_even(metrics: PerformanceMetrics) -> BreakEvenTargets:
         t.messages.append("你幾乎沒有獲利交易,光調盈虧比救不了 —— 進場規則本身要重做。")
 
     # ── 若每筆少付多少成本就轉正 ──
-    # 期望值為負時,看「平均每筆成本」是否大於虧損缺口
+    # 期望值為負時,看「平均每筆成本」是否大於虧損缺口。
+    # 用『金額』表達(明確),不用相對 avg_fee 的比例(因 avg_fee 含稅與滑價,
+    # 講「降低 X% 成本」會讓使用者誤以為只要降手續費率)。
     if metrics.total_trades > 0:
         avg_fee = metrics.total_fees / metrics.total_trades
-        # 每筆若完全免成本,期望值會增加 avg_fee(成本目前是負貢獻)
         if avg_fee > 0 and (expectancy + avg_fee) > 0:
-            # 成本歸零就能轉正 → 算出需削減的比例
-            needed = -expectancy            # 要補的缺口
-            cut_ratio = needed / avg_fee
+            needed = -expectancy            # 每筆要補的缺口(金額)
             t.fee_cut_to_breakeven = needed
             t.messages.append(
                 f"你的每筆平均成本約 {avg_fee:.2f},而期望值只差 {needed:.2f} 就轉正 —— "
-                f"光是把成本降低約 {cut_ratio:.0%}(換低費率券商、降低交易頻率),"
-                "就可能由負翻正。問題可能不在策略,而在被手續費吃掉。"
+                f"只要每筆能省下約 {needed:.2f} 的成本(換低費率券商、降低交易頻率),"
+                "就可能由負翻正。問題可能不在策略,而在被成本吃掉。"
             )
 
     return t

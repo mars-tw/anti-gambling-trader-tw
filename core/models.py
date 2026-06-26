@@ -89,6 +89,16 @@ class Trade:
         delta = self.exit_time - self.entry_time
         return delta.total_seconds() / 86400.0
 
+    @property
+    def is_day_trade(self) -> bool:
+        """是否為當沖:進出場在『同一交易日』(同一日曆日)。
+
+        全工具統一用這個定義(而非 holding_days < 1),避免成本估算
+        (台股當沖證交稅減半)與風格判定兩處各自為政:跨夜但 < 24h 的
+        短單若用 holding_days < 1 會被當沖,但用日曆日卻不是,造成不一致。
+        """
+        return self.entry_time.date() == self.exit_time.date()
+
 
 @dataclass
 class TradeLog:

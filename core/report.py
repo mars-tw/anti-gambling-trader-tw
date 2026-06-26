@@ -15,16 +15,6 @@ def _money(x: float) -> str:
     return f"{x:,.2f}"
 
 
-# 裁決等級的視覺徽章(對應 README 表格的紅綠燈)
-_LEVEL_BADGE = {
-    "gambling": "🟥 賭博",
-    "insufficient": "🟧 樣本不足",
-    "luck_suspected": "🟨 疑似運氣",
-    "fragile_edge": "🟨 脆弱優勢",
-    "statistical_edge": "🟩 具優勢",
-}
-
-
 def render_text_report(
     log: TradeLog,
     metrics: PerformanceMetrics,
@@ -62,7 +52,10 @@ def render_text_report(
     L.append(f"  最大回撤      : {_money(m.max_drawdown)}({m.max_drawdown_pct:.1%})")
     L.append(f"  最長連虧      : {m.max_consecutive_losses} 次")
     L.append(f"  夏普 / 索提諾 : {m.sharpe:.2f} / {m.sortino:.2f}(每筆基準,非年化)")
-    L.append(f"  最賺一筆佔比  : {m.top_trade_pnl_share:.1%} 的總獲利")
+    L.append(f"  單筆最大賺/賠 : {_money(m.largest_win)} / {_money(m.largest_loss)}")
+    # 「最賺一筆佔比」只在有 2 筆以上獲利時才有意義(僅 1 筆時必為 100%,是噪音)
+    if m.wins > 1:
+        L.append(f"  最賺一筆佔比  : {m.top_trade_pnl_share:.1%} 的總獲利")
     L.append("")
 
     # ── 統計顯著性 ──
@@ -122,7 +115,7 @@ def render_text_report(
         L.append("  策略標籤            筆數   每筆期望值      裁決")
         L.append("  " + "─" * 56)
         for tv in tag_verdicts:
-            badge = _LEVEL_BADGE.get(tv.level.value, "")
+            badge = tv.level.badge
             note = " *樣本少" if tv.low_sample else ""
             L.append(
                 f"  {tv.tag[:16]:<16}  {tv.n_trades:>4}   "

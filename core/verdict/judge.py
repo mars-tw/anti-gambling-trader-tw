@@ -32,6 +32,33 @@ class VerdictLevel(str, Enum):
     FRAGILE_EDGE = "fragile_edge"       # 有微弱優勢但脆弱 — 謹慎,需更多驗證
     STATISTICAL_EDGE = "statistical_edge"  # 具統計顯著的優勢 — 但仍非保證
 
+    @property
+    def display_name(self) -> str:
+        """中文等級名(單一事實來源,供 report / per_tag 共用)。"""
+        return _LEVEL_DISPLAY[self]
+
+    @property
+    def badge(self) -> str:
+        """帶紅綠燈 emoji 的徽章。"""
+        return _LEVEL_BADGE[self]
+
+
+# 集中定義各等級的中文名與徽章,避免 report / per_tag 各自硬編一份。
+_LEVEL_DISPLAY = {
+    VerdictLevel.GAMBLING: "賭博",
+    VerdictLevel.INSUFFICIENT: "樣本不足",
+    VerdictLevel.LUCK_SUSPECTED: "疑似運氣",
+    VerdictLevel.FRAGILE_EDGE: "脆弱優勢",
+    VerdictLevel.STATISTICAL_EDGE: "具統計優勢",
+}
+_LEVEL_BADGE = {
+    VerdictLevel.GAMBLING: "🟥 賭博",
+    VerdictLevel.INSUFFICIENT: "🟧 樣本不足",
+    VerdictLevel.LUCK_SUSPECTED: "🟨 疑似運氣",
+    VerdictLevel.FRAGILE_EDGE: "🟨 脆弱優勢",
+    VerdictLevel.STATISTICAL_EDGE: "🟩 具優勢",
+}
+
 
 @dataclass
 class RedFlag:
@@ -57,11 +84,14 @@ class Verdict:
     advice: list[str] = field(default_factory=list)     # 給使用者的具體建議
 
     def as_dict(self) -> dict:
+        # 期望值 ≤ 0 時,「需要多少樣本」沒有意義(再多樣本也無法把負期望變優勢),
+        # 不應把內部哨兵值(9999)洩漏到 JSON;與文字報告口徑一致,輸出 None。
+        req = None if (self.metrics.expectancy or 0) <= 0 else self.required_trades
         return {
             "level": self.level.value,
             "should_discourage": self.should_discourage,
             "headline": self.headline,
-            "required_trades": self.required_trades,
+            "required_trades": req,
             "metrics": self.metrics.as_dict(),
             "significance": self.significance.__dict__,
             "red_flags": [rf.__dict__ for rf in self.red_flags],

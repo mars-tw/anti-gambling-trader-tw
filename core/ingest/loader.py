@@ -61,7 +61,8 @@ FIELD_SYNONYMS: dict[str, list[str]] = {
     ],
     "pnl": [
         "pnl", "profit", "損益", "盈虧", "已實現損益", "realized_pnl", "獲利",
-        "net_pnl", "賺賠", "return",
+        "net_pnl", "賺賠",
+        # 注意:不收 "return" —— 它常指「報酬率(%)」而非損益金額,會被誤當金額。
         # 台股 / 幣安 / IBKR
         "損益金額", "淨收付", "淨收付金額", "realized profit", "fifopnlrealized",
     ],
@@ -325,7 +326,8 @@ def load_trades(
 
         # 成本處理:使用者沒給 fees 且開啟自動估算時,補上估計成本
         if fees is None and auto_estimate_costs and entry_price and quantity:
-            # 當沖判定:進出場為同一日曆日(台股當沖證交稅減半)
+            # 當沖判定:進出場同一交易日(與 Trade.is_day_trade 同義)。
+            # 台股當沖證交稅減半。
             is_day_trade = entry_time.date() == exit_time.date()
             fees = estimate_round_trip_cost(
                 market, side, entry_price, exit_price, quantity,

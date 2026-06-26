@@ -54,17 +54,26 @@ def test_paper_broker_insufficient_funds():
     assert "資金不足" in r.message
 
 
-def test_paper_broker_reverse_flip_avg_price():
-    """反向超量平倉(平多翻空)時,新部位均價應為本次成交價(回歸測試)。"""
+def test_paper_broker_rejects_naked_short():
+    """賣出超過持有部位(裸放空)應被拒單 —— 本紙上模擬只支援做多。"""
     b = PaperBroker(cash=1e9, fee_rate=0, slippage=0)
     b.set_price("AAPL", 100.0)
-    b.place_order(Order("AAPL", OrderSide.BUY, 100))   # +100 @ 100
+    b.place_order(Order("AAPL", OrderSide.BUY, 100))   # +100
     b.set_price("AAPL", 200.0)
-    b.place_order(Order("AAPL", OrderSide.SELL, 150))  # 賣 150 → 淨 -50 空單
-    pos = b.get_positions()[0]
-    assert pos.quantity == -50
-    # 修正前的 bug:均價會沿用舊的 100;修正後應為本次成交價 200
-    assert abs(pos.avg_price - 200.0) < 1e-6
+    r = b.place_order(Order("AAPL", OrderSide.SELL, 150))  # 想賣 150,只有 100
+    assert not r.ok
+    assert "放空" in r.message or "超過" in r.message
+    # 部位不變(拒單後仍持 100)
+    assert b.get_positions()[0].quantity == 100
+
+
+def test_paper_broker_short_does_not_inflate_cash():
+    """無部位直接賣出(放空)不應讓現金憑空增加(回歸測試 #1)。"""
+    b = PaperBroker(cash=100_000, fee_rate=0, slippage=0)
+    b.set_price("AAPL", 100.0)
+    r = b.place_order(Order("AAPL", OrderSide.SELL, 50))   # 空手放空
+    assert not r.ok                                        # 應被拒
+    assert b.get_account().cash == 100_000                 # 現金不變
 
 
 def test_paper_broker_reverse_reduce_keeps_avg_price():

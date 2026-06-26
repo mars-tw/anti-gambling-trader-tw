@@ -65,7 +65,8 @@ def profile_strategy(log: TradeLog) -> StrategyProfile:
     holding = sorted(t.holding_days for t in trades)
     avg_days = sum(holding) / n
     median_days = holding[n // 2]
-    intraday_ratio = sum(1 for h in holding if h < 1.0) / n
+    # 當沖判定統一用 Trade.is_day_trade(同一交易日),與成本估算口徑一致
+    intraday_ratio = sum(1 for t in trades if t.is_day_trade) / n
 
     market_counts = Counter(t.market for t in trades)
     side_counts = Counter(t.side for t in trades)

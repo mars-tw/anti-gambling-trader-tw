@@ -193,14 +193,6 @@ def follow_the_guru(
     )
 
 
-_LEVEL_WORDS = {
-    VerdictLevel.GAMBLING: "賭博",
-    VerdictLevel.INSUFFICIENT: "樣本不足",
-    VerdictLevel.LUCK_SUSPECTED: "疑似運氣",
-    VerdictLevel.FRAGILE_EDGE: "脆弱優勢",
-    VerdictLevel.STATISTICAL_EDGE: "具統計優勢",
-}
-
-
 def _lvl(level: VerdictLevel) -> str:
-    return _LEVEL_WORDS.get(level, level.value)
+    """等級中文名(集中定義於 VerdictLevel.display_name)。"""
+    return level.display_name

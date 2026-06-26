@@ -36,20 +36,72 @@ def _normal_cdf(x: float) -> float:
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
-def _student_t_sf_approx(t: float, df: int) -> float:
-    """t 分布單尾存活函數 P(T > t) 的近似。
+def _betacf(a: float, b: float, x: float, *, max_iter: int = 200,
+            eps: float = 1e-12) -> float:
+    """不完全 beta 函數的連分數展開(Lentz 演算法)。"""
+    tiny = 1e-30
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < tiny:
+        d = tiny
+    d = 1.0 / d
+    h = d
+    for m in range(1, max_iter + 1):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < eps:
+            break
+    return h
 
-    df 夠大時(交易樣本通常 >30)t 分布趨近常態,用常態近似已足夠;
-    df 較小時用 Cornish-Fisher 風格的簡易校正,避免高估顯著性。
+
+def _reg_incomplete_beta(x: float, a: float, b: float) -> float:
+    """正則化不完全 beta 函數 I_x(a, b),純標準庫實作。"""
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    ln_beta = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+    front = math.exp(ln_beta + a * math.log(x) + b * math.log(1.0 - x))
+    if x < (a + 1.0) / (a + b + 2.0):
+        return front * _betacf(a, b, x) / a
+    return 1.0 - front * _betacf(b, a, 1.0 - x) / b
+
+
+def _student_t_sf(t: float, df: int) -> float:
+    """Student-t 分布的單尾存活函數 P(T > t),用真正的 t 分布 CDF。
+
+    透過正則化不完全 beta 函數計算(不依賴 scipy)。這取代了先前自創的
+    收縮近似 —— 對小樣本(df 5~15)的尾端機率才會正確,而非拍腦袋的常數。
     """
     if df <= 0:
         return 1.0
-    # 對小自由度做溫和保守校正:放大尾端
-    if df < 30:
-        # 用常態近似但對 t 做收縮,讓 p 值偏保守(寧可少判定為顯著)
-        t_adj = t * math.sqrt(df / (df + 1.5))
-        return 1.0 - _normal_cdf(t_adj)
-    return 1.0 - _normal_cdf(t)
+    if t == 0:
+        return 0.5
+    x = df / (df + t * t)
+    # I_x(df/2, 1/2) 給的是雙尾機率;單尾依 t 的正負對半分配
+    ib = _reg_incomplete_beta(x, df / 2.0, 0.5)
+    if t > 0:
+        return 0.5 * ib
+    return 1.0 - 0.5 * ib
 
 
 def test_expectancy_positive(
@@ -90,7 +142,7 @@ def test_expectancy_positive(
     se = std / math.sqrt(n) if std > 0 else 0.0
     if se > 0:
         t_stat = mean / se
-        p_t = _student_t_sf_approx(t_stat, n - 1)
+        p_t = _student_t_sf(t_stat, n - 1)
     else:
         # 標準差為 0:所有交易損益相同。全正則確定獲利,全負則確定虧損
         t_stat = math.inf if mean > 0 else (-math.inf if mean < 0 else 0.0)

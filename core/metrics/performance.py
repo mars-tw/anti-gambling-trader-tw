@@ -12,6 +12,10 @@ from dataclasses import dataclass, field
 
 from ..models import TradeLog
 
+# 當沖/極短線的判定門檻:當沖交易佔比超過此值,視為「以當沖為主」。
+# 集中定義,供 performance 與 profiler 共用(避免魔術數字 0.7 散落多處)。
+INTRADAY_RATIO_THRESHOLD = 0.7
+
 
 @dataclass
 class PerformanceMetrics:
@@ -172,7 +176,8 @@ def compute_metrics(log: TradeLog) -> PerformanceMetrics:
     # ── 交易風格 ──
     holding = [t.holding_days for t in trades]
     m.avg_holding_days = _safe_div(sum(holding), len(holding))
-    intraday_count = sum(1 for h in holding if h < 1.0)
-    m.is_mostly_intraday = _safe_div(intraday_count, len(holding)) > 0.7
+    # 當沖判定統一用 Trade.is_day_trade(同一交易日),與成本估算口徑一致
+    intraday_count = sum(1 for t in trades if t.is_day_trade)
+    m.is_mostly_intraday = _safe_div(intraday_count, len(trades)) > INTRADAY_RATIO_THRESHOLD
 
     return m

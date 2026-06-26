@@ -83,6 +83,13 @@ def _summarize(log: TradeLog, label: str, n_bootstrap: int) -> SegmentResult:
     )
 
 
+def _degr_word(degradation: float) -> str:
+    """把衰減比例轉成自然語句(負值代表樣本外反而更好)。"""
+    if degradation < 0:
+        return f"不減反增 {abs(degradation):.0%}"
+    return f"衰減 {degradation:.0%}"
+
+
 def walk_forward_validate(
     log: TradeLog,
     *,
@@ -128,12 +135,19 @@ def walk_forward_validate(
     in_seg = _summarize(in_log, "樣本內(前段)", n_bootstrap)
     out_seg = _summarize(out_log, "樣本外(後段)", n_bootstrap)
 
-    # 優勢是否延續:樣本外期望值仍為正,且不能比樣本內衰退太多
+    # 優勢是否延續:樣本外期望值仍為正、衰退不過大,
+    # 且樣本外本身要『統計顯著』 —— 否則樣本外那段正期望可能只是運氣。
+    # (這是修正:原本只看期望值方向與衰減,沒檢查樣本外顯著性,
+    #  會把 10~15 筆剛好為正但 p 值很高的結果誤報成『優勢延續』。)
     degradation = 1.0
     if in_seg.expectancy != 0:
         degradation = (in_seg.expectancy - out_seg.expectancy) / abs(in_seg.expectancy)
 
-    edge_persisted = (out_seg.expectancy > 0) and (degradation < 0.5)
+    edge_persisted = (
+        out_seg.expectancy > 0
+        and degradation < 0.5
+        and out_seg.significance.is_significant
+    )
 
     # ── 解讀 ──
     if in_seg.expectancy <= 0:
@@ -143,18 +157,26 @@ def walk_forward_validate(
             "目前的證據比較支持『這是賭博/虧損策略』而非『有方法』。",
         ]
     elif edge_persisted:
-        headline = "✅ 優勢延續:樣本內展現的正期望值,在樣本外仍然存在。"
+        headline = "✅ 優勢延續:樣本內展現的正期望值,在樣本外仍然存在且統計顯著。"
         interp += [
-            f"樣本內期望值 {in_seg.expectancy:+.2f} → 樣本外 {out_seg.expectancy:+.2f},"
-            f"衰減 {degradation:.0%},仍維持正值。",
+            f"樣本內期望值 {in_seg.expectancy:+.2f} → 樣本外 {out_seg.expectancy:+.2f}"
+            f"({_degr_word(degradation)}),仍維持正值且通過顯著性檢定。",
             "這是相對強的證據:優勢不只是貼合舊資料,在沒看過的後段也成立。",
             "但仍非保證 —— 市場結構改變時,優勢可能在未來才衰減。",
+        ]
+    elif out_seg.expectancy > 0 and not out_seg.significance.is_significant:
+        # 樣本外帳面為正但統計不顯著 —— 不能當成優勢延續
+        headline = "⚠️ 樣本外不顯著:後段帳面雖為正,但統計上無法排除只是運氣。"
+        interp += [
+            f"樣本內期望值 {in_seg.expectancy:+.2f} → 樣本外 {out_seg.expectancy:+.2f},"
+            f"但樣本外只有 {out_seg.n_trades} 筆,p 值未達顯著。",
+            "後段樣本太少,正期望可能純屬巧合,不足以證明優勢延續到未來。",
         ]
     else:
         headline = "⚠️ 優勢消失:樣本內看似有效,但在樣本外大幅衰退或翻負。"
         interp += [
             f"樣本內期望值 {in_seg.expectancy:+.2f} → 樣本外 {out_seg.expectancy:+.2f}"
-            f"(衰減 {degradation:.0%})。",
+            f"({_degr_word(degradation)})。",
             "這是過度配適 / 倖存者偏差的典型徵兆:策略只是『記住了』舊行情,",
             "面對新資料就失靈。把這種策略自動化,等於把運氣當實力下注。",
         ]
