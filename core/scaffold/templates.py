@@ -86,6 +86,11 @@ python -m core.cli scaffold --name {opts.project_name} --broker {opts.broker} \\
 
 本專案為教育與研究用途,不構成投資建議。投資有風險,盈虧自負。
 過去績效不代表未來表現。你對自己用本程式做出的一切交易負全部責任。
+
+---
+
+由 **反詐投資王(Anti-Gambling Trader)** 腳架產生。
+原作者:好棒棒反詐協會 - 免費顧問 阿軒割割
 """
 
 

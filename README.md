@@ -159,6 +159,10 @@ python tests/test_core.py        # 內建簡易執行器，無需 pytest
 python -m pytest tests/ -v
 ```
 
+## 作者
+
+好棒棒反詐協會 - 免費顧問 阿軒割割
+
 ## 授權
 
 MIT License — 開源、自由使用。詳見 [LICENSE](LICENSE)。

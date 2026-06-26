@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 license = { file = "LICENSE" }
 keywords = ["trading", "backtest", "statistics", "expectancy", "anti-gambling",
             "taiwan-stock", "us-stock", "crypto", "survivorship-bias"]
-authors = [{ name = "反詐投資王 contributors" }]
+authors = [{ name = "好棒棒反詐協會 - 免費顧問 阿軒割割" }]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
