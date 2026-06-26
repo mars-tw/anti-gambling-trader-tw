@@ -1,0 +1,14 @@
+# 反詐投資王 — 相依套件
+#
+# 核心引擎本身「零外部依賴」,只用 Python 標準函式庫即可執行分析。
+# 以下套件僅在特定情境需要,故全部標為選用。
+
+# 讀取 Excel (.xlsx) 交易紀錄時需要
+openpyxl>=3.1 ; extra == "excel"
+
+# 實際執行產生的回測策略骨架時需要(擇一)
+backtrader>=1.9 ; extra == "backtest"
+vectorbt>=0.26 ; extra == "backtest"
+
+# 測試(選用,內建簡易執行器無需 pytest 也能跑)
+pytest>=7.0 ; extra == "dev"

@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anti-gambling-trader"
+version = "0.1.0"
+description = "用統計學判斷你的交易是優勢還是賭博 — 支援台股/美股/加密貨幣"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+keywords = ["trading", "backtest", "statistics", "expectancy", "anti-gambling",
+            "taiwan-stock", "us-stock", "crypto", "survivorship-bias"]
+authors = [{ name = "反詐投資王 contributors" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Intended Audience :: Financial and Insurance Industry",
+]
+# 核心零依賴
+dependencies = []
+
+[project.optional-dependencies]
+excel = ["openpyxl>=3.1"]
+backtest = ["backtrader>=1.9"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+anti-gambling-trader = "core.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/mars-tw/anti-gambling-trader-tw"
+Issues = "https://github.com/mars-tw/anti-gambling-trader-tw/issues"
+
+[tool.setuptools]
+packages = [
+    "core",
+    "core.ingest",
+    "core.metrics",
+    "core.verdict",
+    "core.strategy",
+    "core.backtest",
+    "core.broker",
+    "core.charts",
+    "core.scaffold",
+]

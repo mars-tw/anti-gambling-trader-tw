@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# 使用者的分析產出(可能含個人交易資料,別誤上傳)
+*.result.json
+result.json
+my_strategy.py
+*_strategy.py
+!core/strategy/*.py
+
+# 個人交易紀錄(避免不小心把對帳單推上 git)
+*_private.csv
+*_private.json
+*_private.xlsx
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

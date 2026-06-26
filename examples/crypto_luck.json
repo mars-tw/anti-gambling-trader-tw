@@ -1,0 +1,27 @@
+{
+  "source": "binance_export",
+  "trades": [
+    {"symbol": "BTCUSDT", "side": "long", "entry_time": "2025-01-02", "exit_time": "2025-01-04", "entry_price": 94000, "exit_price": 96000, "quantity": 0.1, "strategy": "追突破"},
+    {"symbol": "ETHUSDT", "side": "long", "entry_time": "2025-01-03", "exit_time": "2025-01-05", "entry_price": 3300, "exit_price": 3200, "quantity": 2, "strategy": "追突破"},
+    {"symbol": "SOLUSDT", "side": "long", "entry_time": "2025-01-05", "exit_time": "2025-01-06", "entry_price": 210, "exit_price": 235, "quantity": 20, "strategy": "梭哈迷因"},
+    {"symbol": "DOGEUSDT", "side": "long", "entry_time": "2025-01-06", "exit_time": "2025-01-07", "entry_price": 0.38, "exit_price": 0.33, "quantity": 30000, "strategy": "梭哈迷因"},
+    {"symbol": "BTCUSDT", "side": "long", "entry_time": "2025-01-08", "exit_time": "2025-01-09", "entry_price": 95000, "exit_price": 93000, "quantity": 0.1, "strategy": "追突破"},
+    {"symbol": "PEPEUSDT", "side": "long", "entry_time": "2025-01-09", "exit_time": "2025-01-10", "entry_price": 0.000018, "exit_price": 0.000035, "quantity": 500000000, "strategy": "梭哈迷因"},
+    {"symbol": "ETHUSDT", "side": "long", "entry_time": "2025-01-11", "exit_time": "2025-01-12", "entry_price": 3250, "exit_price": 3100, "quantity": 2, "strategy": "追突破"},
+    {"symbol": "SOLUSDT", "side": "long", "entry_time": "2025-01-12", "exit_time": "2025-01-13", "entry_price": 230, "exit_price": 215, "quantity": 20, "strategy": "追突破"},
+    {"symbol": "DOGEUSDT", "side": "long", "entry_time": "2025-01-14", "exit_time": "2025-01-15", "entry_price": 0.34, "exit_price": 0.31, "quantity": 30000, "strategy": "梭哈迷因"},
+    {"symbol": "BTCUSDT", "side": "long", "entry_time": "2025-01-16", "exit_time": "2025-01-17", "entry_price": 94500, "exit_price": 92000, "quantity": 0.1, "strategy": "追突破"},
+    {"symbol": "WIFUSDT", "side": "long", "entry_time": "2025-01-17", "exit_time": "2025-01-18", "entry_price": 2.1, "exit_price": 1.7, "quantity": 3000, "strategy": "梭哈迷因"},
+    {"symbol": "ETHUSDT", "side": "long", "entry_time": "2025-01-19", "exit_time": "2025-01-20", "entry_price": 3150, "exit_price": 3050, "quantity": 2, "strategy": "追突破"},
+    {"symbol": "SOLUSDT", "side": "long", "entry_time": "2025-01-21", "exit_time": "2025-01-22", "entry_price": 218, "exit_price": 205, "quantity": 20, "strategy": "追突破"},
+    {"symbol": "PEPEUSDT", "side": "long", "entry_time": "2025-01-22", "exit_time": "2025-01-23", "entry_price": 0.000030, "exit_price": 0.000024, "quantity": 500000000, "strategy": "梭哈迷因"},
+    {"symbol": "BTCUSDT", "side": "long", "entry_time": "2025-01-24", "exit_time": "2025-01-25", "entry_price": 93000, "exit_price": 91000, "quantity": 0.1, "strategy": "追突破"},
+    {"symbol": "DOGEUSDT", "side": "long", "entry_time": "2025-01-26", "exit_time": "2025-01-27", "entry_price": 0.32, "exit_price": 0.29, "quantity": 30000, "strategy": "梭哈迷因"},
+    {"symbol": "ETHUSDT", "side": "long", "entry_time": "2025-01-28", "exit_time": "2025-01-29", "entry_price": 3050, "exit_price": 2950, "quantity": 2, "strategy": "追突破"},
+    {"symbol": "SOLUSDT", "side": "long", "entry_time": "2025-01-30", "exit_time": "2025-01-31", "entry_price": 200, "exit_price": 190, "quantity": 20, "strategy": "追突破"},
+    {"symbol": "WIFUSDT", "side": "long", "entry_time": "2025-02-01", "exit_time": "2025-02-02", "entry_price": 1.6, "exit_price": 1.4, "quantity": 3000, "strategy": "梭哈迷因"},
+    {"symbol": "BTCUSDT", "side": "long", "entry_time": "2025-02-03", "exit_time": "2025-02-04", "entry_price": 91000, "exit_price": 89000, "quantity": 0.1, "strategy": "追突破"},
+    {"symbol": "PEPEUSDT", "side": "long", "entry_time": "2025-02-05", "exit_time": "2025-02-06", "entry_price": 0.000024, "exit_price": 0.000020, "quantity": 500000000, "strategy": "梭哈迷因"},
+    {"symbol": "ETHUSDT", "side": "long", "entry_time": "2025-02-07", "exit_time": "2025-02-08", "entry_price": 2950, "exit_price": 2880, "quantity": 2, "strategy": "追突破"}
+  ]
+}
