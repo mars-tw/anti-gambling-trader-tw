@@ -22,6 +22,8 @@ FIELD_SYNONYMS: dict[str, list[str]] = {
     "symbol": [
         "symbol", "ticker", "代號", "股票代號", "標的", "商品", "幣別", "pair",
         "instrument", "code", "stockcode", "證券代號",
+        # 台股券商 / 幣安 / IBKR
+        "證券名稱", "股票名稱", "商品名稱", "market", "underlyingsymbol", "contract",
     ],
     "side": [
         "side", "方向", "買賣", "買賣別", "交易別", "buysell", "direction", "type",
@@ -30,6 +32,8 @@ FIELD_SYNONYMS: dict[str, list[str]] = {
     "entry_time": [
         "entry_time", "entrytime", "進場時間", "買進時間", "open_time", "opentime",
         "成交日期", "進場日", "date", "buy_date", "開倉時間",
+        # 台股 / 幣安 / IBKR
+        "成交日", "交易日期", "委託日期", "date(utc)", "tradedate", "datetime",
     ],
     "exit_time": [
         "exit_time", "exittime", "出場時間", "賣出時間", "close_time", "closetime",
@@ -38,22 +42,28 @@ FIELD_SYNONYMS: dict[str, list[str]] = {
     "entry_price": [
         "entry_price", "entryprice", "進場價", "買進價", "open_price", "成交價",
         "買價", "cost", "成本", "開倉價", "buy_price",
+        # 台股 / 幣安 / IBKR(注意:成交價金/價金是「總額」非單價,不納入)
+        "成交均價", "price", "tradeprice", "成交單價",
     ],
     "exit_price": [
         "exit_price", "exitprice", "出場價", "賣出價", "close_price", "平倉價",
         "賣價", "sell_price",
     ],
     "quantity": [
-        "quantity", "qty", "數量", "股數", "張數", "size", "amount", "volume",
-        "口數", "成交數量", "shares",
+        "quantity", "qty", "數量", "股數", "張數", "張", "size", "amount", "volume",
+        "口數", "成交數量", "成交股數", "shares", "成交量",
     ],
     "fees": [
         "fees", "fee", "手續費", "費用", "成本費用", "commission", "手續費及稅",
         "交易成本", "total_fee",
+        # 台股稅費分項 / 幣安 / IBKR
+        "證交稅", "交易稅", "手續費及交易稅", "ibcommission",
     ],
     "pnl": [
         "pnl", "profit", "損益", "盈虧", "已實現損益", "realized_pnl", "獲利",
         "net_pnl", "賺賠", "return",
+        # 台股 / 幣安 / IBKR
+        "損益金額", "淨收付", "淨收付金額", "realized profit", "fifopnlrealized",
     ],
     "tag": [
         "tag", "策略", "strategy", "標籤", "備註", "note", "remark", "策略名稱",
@@ -262,63 +272,89 @@ def load_trades(
         col = field_map.get(std)
         return row.get(col, default) if col else default
 
+    # 台股「張」單位偵測:若數量欄名含「張」(如 張數、張),代表單位是「張」
+    # 而非「股」,1 張 = 1000 股。不換算會讓損益與成本差 1000 倍且不報錯,
+    # 對台股使用者是最危險的靜默錯誤。
+    qty_col = field_map.get("quantity", "")
+    qty_in_lots = ("張" in str(qty_col))
+    lot_multiplier = 1000 if qty_in_lots else 1
+
     trades: list[Trade] = []
     skipped = 0
+    skip_reasons: list[str] = []   # 收集略過原因,回報給使用者(不再靜默吞錯)
     for row in rows:
-        try:
-            symbol = str(get(row, "symbol", "")).strip()
-            if not symbol:
-                skipped += 1
-                continue
-
-            market = infer_market(symbol, market_hint)
-            side = _parse_side(get(row, "side", "long"))
-
-            entry_price = _to_float(get(row, "entry_price"), 0.0) or 0.0
-            exit_price = _to_float(get(row, "exit_price"), 0.0) or 0.0
-            quantity = _to_float(get(row, "quantity"), 0.0) or 0.0
-
-            entry_time = _parse_time(get(row, "entry_time", "1970-01-01"))
-            exit_time = _parse_time(get(row, "exit_time")) if get(row, "exit_time") else entry_time
-
-            fees = _to_float(get(row, "fees"), None)
-            pnl = _to_float(get(row, "pnl"), None)
-            tag = get(row, "tag")
-            tag = str(tag).strip() if tag not in (None, "") else None
-
-            # 成本處理:使用者沒給 fees 且開啟自動估算時,補上估計成本
-            if fees is None and auto_estimate_costs and entry_price and quantity:
-                # 當沖判定:進出場為同一日曆日(台股當沖證交稅減半)
-                is_day_trade = entry_time.date() == exit_time.date()
-                fees = estimate_round_trip_cost(
-                    market, side, entry_price, exit_price, quantity,
-                    is_day_trade=is_day_trade,
-                )
-            fees = fees or 0.0
-
-            trade = Trade(
-                symbol=symbol,
-                market=market,
-                side=side,
-                entry_time=entry_time,
-                exit_time=exit_time,
-                entry_price=entry_price,
-                exit_price=exit_price,
-                quantity=quantity,
-                fees=fees,
-                pnl=pnl,  # 若為 None,Trade.__post_init__ 會用價格推算(已含 fees)
-                tag=tag,
-            )
-            trades.append(trade)
-        except (ValueError, TypeError):
+        row_no = len(trades) + skipped + 1
+        symbol = str(get(row, "symbol", "")).strip()
+        if not symbol:
             skipped += 1
+            if len(skip_reasons) < 10:
+                skip_reasons.append(f"第 {row_no} 列:缺少標的代號")
             continue
 
+        # 時間解析失敗是「這列資料髒」的明確訊號,單獨捕捉並記錄原因。
+        try:
+            entry_time = _parse_time(get(row, "entry_time", "1970-01-01"))
+            exit_time = (
+                _parse_time(get(row, "exit_time")) if get(row, "exit_time") else entry_time
+            )
+        except ValueError as exc:
+            skipped += 1
+            if len(skip_reasons) < 10:
+                skip_reasons.append(f"第 {row_no} 列({symbol}):時間格式無法解析 — {exc}")
+            continue
+
+        market = infer_market(symbol, market_hint)
+        side = _parse_side(get(row, "side", "long"))
+
+        entry_price = _to_float(get(row, "entry_price"), 0.0) or 0.0
+        exit_price = _to_float(get(row, "exit_price"), 0.0) or 0.0
+        quantity = (_to_float(get(row, "quantity"), 0.0) or 0.0) * lot_multiplier
+
+        fees = _to_float(get(row, "fees"), None)
+        pnl = _to_float(get(row, "pnl"), None)
+        tag = get(row, "tag")
+        tag = str(tag).strip() if tag not in (None, "") else None
+
+        # 成本處理:使用者沒給 fees 且開啟自動估算時,補上估計成本
+        if fees is None and auto_estimate_costs and entry_price and quantity:
+            # 當沖判定:進出場為同一日曆日(台股當沖證交稅減半)
+            is_day_trade = entry_time.date() == exit_time.date()
+            fees = estimate_round_trip_cost(
+                market, side, entry_price, exit_price, quantity,
+                is_day_trade=is_day_trade,
+            )
+        fees = fees or 0.0
+
+        trade = Trade(
+            symbol=symbol,
+            market=market,
+            side=side,
+            entry_time=entry_time,
+            exit_time=exit_time,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            quantity=quantity,
+            fees=fees,
+            pnl=pnl,  # 若為 None,Trade.__post_init__ 會用價格推算(已含 fees)
+            tag=tag,
+        )
+        trades.append(trade)
+
     if not trades:
-        raise ValueError(f"沒有任何有效交易可解析(略過 {skipped} 列)。請檢查欄位對應。")
+        detail = "\n  ".join(skip_reasons) if skip_reasons else "請檢查欄位對應與資料格式。"
+        raise ValueError(
+            f"沒有任何有效交易可解析(略過 {skipped} 列)。\n  {detail}"
+        )
+
+    # 略過比例過高,通常代表欄位對應整個錯了 — 主動警告而非靜默。
+    skip_ratio = skipped / (len(trades) + skipped) if (len(trades) + skipped) else 0
+    warn = ""
+    if skip_ratio > 0.2:
+        warn = f", ⚠️略過比例 {skip_ratio:.0%} 偏高(可能欄位對應有誤)"
+    lot_note = ", 數量以『張』×1000 換算為股" if qty_in_lots else ""
 
     return TradeLog(
         trades=trades,
-        source=f"{path.name} ({fmt}, 載入 {len(trades)} 筆, 略過 {skipped} 筆)",
+        source=f"{path.name} ({fmt}, 載入 {len(trades)} 筆, 略過 {skipped} 筆{warn}{lot_note})",
         account_label=path.stem,
     )

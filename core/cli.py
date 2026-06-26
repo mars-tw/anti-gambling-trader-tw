@@ -99,6 +99,12 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("brokers", help="列出可接入的券商範例框架")
     sub.add_parser("charts", help="列出可用的開源圖表庫")
 
+    # ── scam-check:投資詐騙風險自我檢測 ──
+    sub.add_parser(
+        "scam-check",
+        help="互動式檢測你是否遇到投資詐騙(假飆股群/假名師/保證獲利/誊騙幣)",
+    )
+
     return p
 
 
@@ -171,6 +177,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {lib.key:12s} {lib.name}  [{lib.license}, {lib.kind}]")
             print(f"  {'':12s}   {lib.blurb}")
         return 0
+
+    if args.command == "scam-check":
+        from .antiscam import run_scam_check
+
+        result = run_scam_check()
+        # 高風險時回傳非 0,方便腳本判斷
+        return 2 if result.risk_level in ("極高", "高") else 0
 
     return 0
 

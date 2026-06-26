@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .antiscam.signals import scam_warnings_for
 from .backtest.validate import OutOfSampleReport
 from .metrics.performance import PerformanceMetrics
 from .models import TradeLog
@@ -110,6 +111,15 @@ def render_text_report(
     for a in verdict.advice:
         L.append(f"  • {a}")
     L.append("")
+
+    # ── 反詐警語(若分析結果命中詐騙受害特徵)──
+    scam_warnings = scam_warnings_for(metrics, profile)
+    if scam_warnings:
+        L.append("【🛡 反詐提醒 — 你的交易可能與投資詐騙有關】")
+        for w in scam_warnings:
+            L.append(f"  {w}")
+        L.append("  ── 想進一步檢測是否遇到詐騙,請執行:anti-gambling-trader scam-check")
+        L.append("")
 
     # ── 勸退橫幅(若需要)──
     if verdict.should_discourage:

@@ -23,7 +23,7 @@ dependencies = []
 
 [project.optional-dependencies]
 excel = ["openpyxl>=3.1"]
-backtest = ["backtrader>=1.9"]
+backtest = ["backtrader>=1.9", "vectorbt>=0.26"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]
@@ -44,4 +44,5 @@ packages = [
     "core.broker",
     "core.charts",
     "core.scaffold",
+    "core.antiscam",
 ]
