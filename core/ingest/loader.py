@@ -261,11 +261,16 @@ def load_trades(
 
     if not (has_prices or has_pnl):
         missing = [k for k in required_core if k not in field_map]
+        # 列出偵測到的欄位(帶編號),並指向 CLI 真正可用的兩條出路。
+        numbered = "\n".join(f"    [{i}] {c}" for i, c in enumerate(columns, 1))
         raise ValueError(
-            f"無法辨識必要欄位: {missing}。\n"
-            f"偵測到的欄位: {columns}\n"
-            f"請用 field_overrides 手動指定,例如 "
-            f"{{'symbol': '你的代號欄位', 'entry_price': '你的買價欄位'}}"
+            f"無法自動辨識必要欄位:{missing}\n"
+            f"  你的檔案有這些欄位:\n{numbered}\n\n"
+            f"  兩種解法:\n"
+            f"  (1) 用 --field 手動對應,例如:\n"
+            f"      --field symbol=你的代號欄 --field entry_price=你的買價欄 "
+            f"--field exit_price=你的賣價欄 --field quantity=你的數量欄\n"
+            f"  (2) 執行 `init-template` 產生標準格式範本,照填後再分析。"
         )
 
     def get(row: dict, std: str, default: Any = None) -> Any:
@@ -285,6 +290,9 @@ def load_trades(
     for row in rows:
         row_no = len(trades) + skipped + 1
         symbol = str(get(row, "symbol", "")).strip()
+        # 註解列(以 # 開頭,如範本中的說明)直接略過,不計入錯誤
+        if symbol.startswith("#"):
+            continue
         if not symbol:
             skipped += 1
             if len(skip_reasons) < 10:

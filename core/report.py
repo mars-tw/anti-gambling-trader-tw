@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .antiscam.signals import scam_warnings_for
 from .backtest.validate import OutOfSampleReport
+from .metrics.breakeven import compute_break_even
 from .metrics.performance import PerformanceMetrics
 from .models import TradeLog
 from .strategy.profiler import StrategyProfile
@@ -14,12 +15,26 @@ def _money(x: float) -> str:
     return f"{x:,.2f}"
 
 
+# 裁決等級的視覺徽章(對應 README 表格的紅綠燈)
+_LEVEL_BADGE = {
+    "gambling": "🟥 賭博",
+    "insufficient": "🟧 樣本不足",
+    "luck_suspected": "🟨 疑似運氣",
+    "fragile_edge": "🟨 脆弱優勢",
+    "statistical_edge": "🟩 具優勢",
+}
+
+
 def render_text_report(
     log: TradeLog,
     metrics: PerformanceMetrics,
     verdict: Verdict,
     profile: StrategyProfile,
     oos: OutOfSampleReport | None = None,
+    *,
+    tag_verdicts=None,
+    counterfactual=None,
+    follow_guru=None,
 ) -> str:
     """產生純文字報告(適合終端機輸出)。"""
     L: list[str] = []
@@ -97,14 +112,47 @@ def render_text_report(
     L.append(f"  風格          : {profile.style}")
     L.append(f"  平均持倉      : {profile.avg_holding_days:.1f} 天")
     L.append(f"  標的集中度    : 前三大標的佔 {profile.symbol_concentration:.0%}(共 {profile.distinct_symbols} 檔)")
-    if profile.per_tag_winrate:
-        L.append("  各策略標籤勝率:")
-        for tag, wr in sorted(profile.per_tag_winrate.items(), key=lambda x: -x[1]):
-            cnt = profile.tags.get(tag, 0)
-            L.append(f"    - {tag}: 勝率 {wr:.0%}(共 {cnt} 筆)")
     for note in profile.notes:
         L.append(f"  ⚠ {note}")
     L.append("")
+
+    # ── 逐策略裁決(揪出『哪一招在送錢』)──
+    if tag_verdicts:
+        L.append("【🔍 各策略體檢 — 哪一招在送錢?(由最差到最好)】")
+        L.append("  策略標籤            筆數   每筆期望值      裁決")
+        L.append("  " + "─" * 56)
+        for tv in tag_verdicts:
+            badge = _LEVEL_BADGE.get(tv.level.value, "")
+            note = " *樣本少" if tv.low_sample else ""
+            L.append(
+                f"  {tv.tag[:16]:<16}  {tv.n_trades:>4}   "
+                f"{_money(tv.expectancy):>12}   {badge}{note}"
+            )
+        L.append("  (帶 * 者樣本較少,裁決僅供參考)")
+        L.append("")
+
+    # ── 跟單 / 聽明牌的成績單(反詐實用化:用你自己的錢證明跟單必賠)──
+    if follow_guru is not None:
+        L.append("【🎯 跟單 / 聽明牌的成績單】")
+        L.append(f"  {follow_guru.message}")
+        if follow_guru.follow_tags:
+            L.append(f"  (涵蓋標籤:{', '.join(follow_guru.follow_tags[:5])})")
+        L.append("")
+
+    # ── 反事實:停掉最差策略後會如何 ──
+    if counterfactual is not None:
+        L.append("【💡 如果停掉最差的一招】")
+        L.append(f"  {counterfactual.message}")
+        L.append("")
+
+    # ── 離轉正還差多少(期望值為負時,給具體可行動的目標數字)──
+    if metrics.expectancy <= 0 and metrics.total_trades > 0:
+        targets = compute_break_even(metrics)
+        if targets.messages and not targets.already_positive:
+            L.append("【📐 離轉正還差多少 — 具體目標】")
+            for msg in targets.messages:
+                L.append(f"  • {msg}")
+            L.append("")
 
     # ── 建議 ──
     L.append("【給你的建議】")

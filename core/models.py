@@ -116,6 +116,14 @@ class TradeLog:
             account_label=f"{self.account_label}::{tag}",
         )
 
+    def filter(self, predicate, label: str = "filtered") -> "TradeLog":
+        """用任意述詞篩選交易(如『跟單類 tag』或『排除最差策略』)。"""
+        return TradeLog(
+            trades=[t for t in self.trades if predicate(t)],
+            source=self.source,
+            account_label=f"{self.account_label}::{label}",
+        )
+
     def sorted_by_time(self) -> "TradeLog":
         """依出場時間排序。回測與回撤計算需要時間順序。"""
         return TradeLog(
