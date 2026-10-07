@@ -70,6 +70,57 @@ def _force_utf8_stdout() -> None:
         pass
 
 
+def _paths_alias(left: str | Path, right: str | Path) -> bool:
+    """Compare lexical aliases and existing hardlinks without touching content."""
+
+    a = Path(left)
+    b = Path(right)
+    if a.resolve(strict=False) == b.resolve(strict=False):
+        return True
+    if a.exists() and b.exists():
+        try:
+            return a.samefile(b)
+        except OSError:
+            return False
+    return False
+
+
+def _preflight_file_outputs(
+    *,
+    inputs: list[str | Path],
+    outputs: dict[str, str | Path | None],
+) -> None:
+    """Reject input/output aliases, duplicate outputs and existing destinations."""
+
+    requested = [
+        (label, Path(value))
+        for label, value in outputs.items()
+        if value not in (None, "")
+    ]
+    for index, (label, path) in enumerate(requested):
+        for other_label, other_path in requested[index + 1:]:
+            if _paths_alias(path, other_path):
+                raise ValueError(
+                    f"輸出路徑衝突: {label} 與 {other_label} 指向同一檔案 {path}"
+                )
+        for source in inputs:
+            if source not in (None, "") and _paths_alias(path, source):
+                raise ValueError(
+                    f"拒絕覆蓋輸入資料: {label} 的目的地 {path} 與來源 {source} 相同"
+                )
+        if path.exists() or path.is_symlink():
+            raise ValueError(
+                f"輸出檔已存在，為避免覆蓋資料已拒絕: {label}={path}"
+            )
+
+
+def _write_new_text(path: str | Path, content: str, *, encoding: str = "utf-8") -> None:
+    """Create a new text file atomically with respect to overwrite races."""
+
+    with Path(path).open("x", encoding=encoding, newline="") as handle:
+        handle.write(content)
+
+
 def _broker_choices() -> list[str]:
     """scaffold --broker 的可選值:paper + 註冊表所有券商(動態取得)。"""
     from .broker import BROKER_TEMPLATES
@@ -256,7 +307,11 @@ def _cmd_init_template(args) -> int:
         print(f"錯誤:{out} 已存在,為避免覆蓋你的資料,請改用 --out 指定別的路徑。",
               file=sys.stderr)
         return 1
-    out.write_text(_TEMPLATE_CSV, encoding="utf-8-sig")
+    try:
+        _write_new_text(out, _TEMPLATE_CSV, encoding="utf-8-sig")
+    except OSError as exc:
+        print(f"錯誤:無法寫入範本 {out}({exc})", file=sys.stderr)
+        return 1
     print(f"✅ 已產生空白交易紀錄範本:{out}\n")
     print("下一步:")
     print(f"  1. 用 Excel 或記事本打開 {out},把範例換成你自己的交易。")
@@ -392,6 +447,15 @@ def _cmd_scan_screenshot(args) -> int:
             file=sys.stderr,
         )
         return 1
+    input_paths = [path for path in (args.image, args.text_file) if path]
+    try:
+        _preflight_file_outputs(
+            inputs=input_paths,
+            outputs={"--json": args.json},
+        )
+    except (ValueError, OSError) as exc:
+        print(f"錯誤: {exc}", file=sys.stderr)
+        return 1
     try:
         if args.image:
             result = parse_screenshot_image(
@@ -511,10 +575,14 @@ def _cmd_scan_screenshot(args) -> int:
                 "策略勝率或詐騙機率。"
             ),
         }
-        Path(args.json).write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False),
-            encoding="utf-8",
-        )
+        try:
+            _write_new_text(
+                args.json,
+                json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False),
+            )
+        except OSError as exc:
+            print(f"錯誤:無法寫入 --json {args.json}({exc})", file=sys.stderr)
+            return 1
         print(f"[已輸出待覆核 JSON] {args.json}")
     return 0
 
@@ -802,6 +870,20 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
+        try:
+            _preflight_file_outputs(
+                inputs=[target],
+                outputs={
+                    "--json": args.json,
+                    "--strategy": args.strategy,
+                    "--html": args.html,
+                    "--card": args.card,
+                },
+            )
+        except (ValueError, OSError) as exc:
+            print(f"錯誤: {exc}", file=sys.stderr)
+            return 1
+
         # 解析 --field 欄位覆寫
         field_overrides = _parse_field_overrides(args.field)
         if field_overrides is None:
@@ -867,17 +949,28 @@ def main(argv: list[str] | None = None) -> int:
                     "risk_scenario": scenario.as_dict() if scenario else None,
                     "risk_scenario_skipped_reason": skip_reason,
                 }
-            Path(args.json).write_text(
-                # sanitize:full_extras 等巢狀結構的 inf/NaN 也要轉 null;
-                # allow_nan=False 當最後防線 —— 再漏就直接炸,不輸出壞 JSON
-                json.dumps(sanitize_json(payload), ensure_ascii=False,
-                           indent=2, allow_nan=False),
-                encoding="utf-8",
-            )
+            try:
+                _write_new_text(
+                    args.json,
+                    # sanitize:full_extras 等巢狀結構的 inf/NaN 也要轉 null;
+                    # allow_nan=False 當最後防線 —— 再漏就直接炸,不輸出壞 JSON
+                    json.dumps(sanitize_json(payload), ensure_ascii=False,
+                               indent=2, allow_nan=False),
+                )
+            except OSError as exc:
+                print(f"錯誤:無法寫入 --json {args.json}({exc})", file=sys.stderr)
+                return 1
             print(f"\n[已輸出 JSON 結果] {args.json}")
 
         if args.strategy:
-            Path(args.strategy).write_text(result.strategy_code, encoding="utf-8")
+            try:
+                _write_new_text(args.strategy, result.strategy_code)
+            except OSError as exc:
+                print(
+                    f"錯誤:無法寫入 --strategy {args.strategy}({exc})",
+                    file=sys.stderr,
+                )
+                return 1
             print(f"[已輸出策略骨架] {args.strategy}")
             if result.verdict.should_discourage:
                 print(
@@ -892,18 +985,26 @@ def main(argv: list[str] | None = None) -> int:
             # 模擬被略過時,略過原因也要進 HTML —— 分享出去的報告
             # 不能看起來像「完整健檢已做完」。
             trend_r, scen, skip = full_extras if full_extras else (None, None, None)
-            Path(args.html).write_text(
-                render_html_report(
-                    result, trend=trend_r, scenario=scen, scenario_note=skip
-                ),
-                encoding="utf-8",
-            )
+            try:
+                _write_new_text(
+                    args.html,
+                    render_html_report(
+                        result, trend=trend_r, scenario=scen, scenario_note=skip
+                    ),
+                )
+            except OSError as exc:
+                print(f"錯誤:無法寫入 --html {args.html}({exc})", file=sys.stderr)
+                return 1
             print(f"[已輸出 HTML 報告] {args.html}(用瀏覽器打開)")
 
         if args.card:
             from .report_html import render_share_card
 
-            Path(args.card).write_text(render_share_card(result), encoding="utf-8")
+            try:
+                _write_new_text(args.card, render_share_card(result))
+            except OSError as exc:
+                print(f"錯誤:無法寫入 --card {args.card}({exc})", file=sys.stderr)
+                return 1
             print(f"[已輸出分享圖卡] {args.card}(用瀏覽器打開後截圖)")
 
         # ── 下一步引導(讓使用者知道接下來能做什麼)──

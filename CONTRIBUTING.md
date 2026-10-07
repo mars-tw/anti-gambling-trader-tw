@@ -14,8 +14,8 @@
 ```bash
 git clone https://github.com/mars-tw/anti-gambling-trader-tw.git
 cd anti-gambling-trader-tw
-pip install -e .
-python -m pytest tests/ -q     # 全部測試必須通過(目前 200 個)
+python -m pip install -e ".[dev]"
+python -m pytest tests/ -q     # 全部測試必須通過；數量以當次 pytest 收集為準
 ```
 
 - 修 bug 請附回歸測試;統計相關的修改請附可重現實驗(參考 `experiments/`

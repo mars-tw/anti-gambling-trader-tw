@@ -257,6 +257,7 @@ class AlpacaBroker(BrokerAdapter):
                            filled_quantity=float(resp.filled_qty or 0))
 
     def cancel_order(self, order_id: str) -> bool:
+        self._guard_live()
         self.client.cancel_order_by_id(order_id)
         return True
 ''',

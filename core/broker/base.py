@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -20,6 +21,13 @@ class OrderSide(str, Enum):
 class OrderType(str, Enum):
     MARKET = "market"   # 市價單
     LIMIT = "limit"     # 限價單
+
+
+def _is_finite_number(value: object) -> bool:
+    """True only for real int/float finite numbers; bool / NaN / Inf rejected."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value)
 
 
 @dataclass
@@ -39,10 +47,15 @@ class Order:
             raise ValueError("委託方向必須是 OrderSide.BUY 或 OrderSide.SELL")
         if not isinstance(self.order_type, OrderType):
             raise ValueError("委託類型必須是 OrderType.MARKET 或 OrderType.LIMIT")
-        if self.quantity <= 0:
-            raise ValueError("委託數量必須大於 0")
-        if self.order_type == OrderType.LIMIT and self.limit_price is None:
-            raise ValueError("限價單必須提供 limit_price")
+        if not isinstance(self.symbol, str) or not self.symbol.strip():
+            raise ValueError("委託代號不可空白")
+        if not _is_finite_number(self.quantity) or self.quantity <= 0:
+            raise ValueError("委託數量必須是有限且大於 0 的數字")
+        if self.order_type == OrderType.LIMIT:
+            if self.limit_price is None:
+                raise ValueError("限價單必須提供 limit_price")
+            if not _is_finite_number(self.limit_price) or self.limit_price <= 0:
+                raise ValueError("限價必須是有限且大於 0 的數字")
 
 
 @dataclass
@@ -110,8 +123,10 @@ class BrokerAdapter(ABC):
 
         交易者必須親手呼叫並傳入 i_understand_the_risk=True,
         才能解除真實下單的封鎖。這是刻意的摩擦,逼你停下來想清楚。
+        只有字面 True 可解鎖；字串 / 整數 / None 一律視為失敗並維持關閉。
         """
-        if not i_understand_the_risk:
+        if i_understand_the_risk is not True:
+            self._live_confirmed = False
             raise PermissionError(
                 "要開啟真實下單,必須明確傳入 i_understand_the_risk=True。\n"
                 "請先確認:策略已通過統計與樣本外驗證、已充分紙上模擬、"
@@ -121,7 +136,7 @@ class BrokerAdapter(ABC):
 
     def _guard_live(self) -> None:
         """送出真實訂單前的最後一道檢查。"""
-        if self.is_live and not self._live_confirmed:
+        if self.is_live and self._live_confirmed is not True:
             raise PermissionError(
                 f"[{self.name}] 真實下單已被安全閘門攔下。\n"
                 "請先呼叫 broker.confirm_live_trading(i_understand_the_risk=True)。"

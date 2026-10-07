@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -177,10 +179,75 @@ def _build_broker_lib() -> str:
 
 def write_project(opts: ScaffoldOptions, dest_dir: str | Path) -> Path:
     """產生專案並寫入指定目錄。回傳專案根目錄路徑。"""
-    root = Path(dest_dir) / opts.project_name
+    # 先清理/驗證 project_name，再用它組路徑；不可讓未 strip 的名稱先決定
+    # 寫入位置，之後才在 generate_project() 裡悄悄改名。
+    opts.validate()
+    destination = Path(dest_dir)
+    root = destination / opts.project_name
     files = generate_project(opts)
-    for f in files:
-        target = root / f.relpath
+
+    def is_link_or_reparse(path: Path) -> bool:
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            return False
+        attrs = getattr(info, "st_file_attributes", 0)
+        reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+        return path.is_symlink() or bool(attrs & reparse_flag)
+
+    if is_link_or_reparse(destination):
+        raise ValueError(f"輸出目錄不可是 symlink/reparse point: {destination}")
+    if is_link_or_reparse(root):
+        raise ValueError(f"專案根目錄不可是 symlink/reparse point: {root}")
+    if root.exists():
+        if not root.is_dir():
+            raise ValueError(f"專案目的地已存在且不是目錄: {root}")
+        if any(root.iterdir()):
+            raise ValueError(
+                f"專案目的地已存在且非空，為避免覆蓋既有程式已拒絕: {root}"
+            )
+
+    # 所有碰撞/穿越/連結檢查必須在 mkdir 或 write 之前一次完成，這樣偵測到
+    # 問題時不會留下半套專案或覆蓋使用者的 strategy.py。
+    root_resolved = root.resolve(strict=False)
+    targets: list[tuple[GeneratedFile, Path]] = []
+    seen_targets: set[str] = set()
+    for generated in files:
+        rel = Path(generated.relpath)
+        if (
+            not generated.relpath
+            or rel.is_absolute()
+            or ".." in rel.parts
+        ):
+            raise ValueError(f"產出檔案路徑不合法: {generated.relpath!r}")
+        target = root / rel
+        target_resolved = target.resolve(strict=False)
+        try:
+            common = os.path.commonpath((str(root_resolved), str(target_resolved)))
+        except ValueError as exc:
+            raise ValueError(f"產出檔案越過專案根目錄: {generated.relpath!r}") from exc
+        if os.path.normcase(common) != os.path.normcase(str(root_resolved)):
+            raise ValueError(f"產出檔案越過專案根目錄: {generated.relpath!r}")
+        target_key = os.path.normcase(str(target_resolved))
+        if target_key in seen_targets:
+            raise ValueError(f"產出檔案路徑重複: {generated.relpath!r}")
+        seen_targets.add(target_key)
+
+        current = target
+        while current != root:
+            if is_link_or_reparse(current):
+                raise ValueError(
+                    f"產出目標不可經過 symlink/reparse point: {current}"
+                )
+            current = current.parent
+        targets.append((generated, target))
+
+    root.mkdir(parents=True, exist_ok=True)
+    for generated, target in targets:
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(f.content, encoding="utf-8")
+        # The preflight above cannot reserve a pathname against a concurrent
+        # creator. Exclusive creation makes that race fail closed instead of
+        # replacing a file that appeared after preflight.
+        with target.open("x", encoding="utf-8") as handle:
+            handle.write(generated.content)
     return root

@@ -17,6 +17,7 @@ from .base import (
     OrderSide,
     OrderType,
     Position,
+    _is_finite_number,
 )
 
 
@@ -58,9 +59,17 @@ class PaperBroker(BrokerAdapter):
         allow_short: bool = False,
     ) -> None:
         super().__init__()
-        self._cash = cash
-        self._fee_rate = fee_rate
-        self._slippage = slippage
+        if not _is_finite_number(cash) or cash < 0:
+            raise ValueError("cash 必須是有限且 >= 0 的數字")
+        if not _is_finite_number(fee_rate) or fee_rate < 0:
+            raise ValueError("fee_rate 必須是有限且 >= 0 的數字")
+        if not _is_finite_number(slippage) or not (0 <= slippage < 1):
+            raise ValueError("slippage 必須滿足 0 <= slippage < 1")
+        if type(allow_short) is not bool:
+            raise ValueError("allow_short 必須是字面 bool")
+        self._cash = float(cash)
+        self._fee_rate = float(fee_rate)
+        self._slippage = float(slippage)
         self._currency = currency
         self._price_feed = price_feed
         # 預設 False:賣出超過持倉直接拒單。設為 True 時允許裸放空,
@@ -74,15 +83,19 @@ class PaperBroker(BrokerAdapter):
     # ── 報價 ──────────────────────────────────────────────
     def set_price(self, symbol: str, price: float) -> None:
         """手動餵入最新報價(回測 / 模擬時逐根餵價)。"""
-        self._prices[symbol] = price
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise ValueError("報價代號不可空白")
+        if not _is_finite_number(price) or price <= 0:
+            raise ValueError("報價必須是有限且大於 0 的數字")
+        self._prices[symbol] = float(price)
         if symbol in self._positions:
-            self._positions[symbol].market_price = price
+            self._positions[symbol].market_price = float(price)
 
     def get_price(self, symbol: str) -> float:
         if self._price_feed is not None:
             price = self._price_feed(symbol)
             self.set_price(symbol, price)
-            return price
+            return self._prices[symbol]
         if symbol not in self._prices:
             raise ValueError(
                 f"PaperBroker 沒有 {symbol} 的報價。請先 set_price() 或提供 price_feed。"
@@ -95,10 +108,33 @@ class PaperBroker(BrokerAdapter):
         pass
 
     def get_account(self) -> AccountInfo:
-        equity = self._cash + sum(
-            p.quantity * self._prices.get(p.symbol, p.avg_price)
-            for p in self._positions.values()
-        )
+        if not _is_finite_number(self._cash):
+            raise ValueError("紙上帳戶現金不是有限數字")
+
+        # 不可用 sum() 靜默累加：即使每個價格、數量都有限，極端部位的
+        # 乘積或累加仍可能溢位成 inf。這種帳戶快照沒有意義，必須拒絕而非
+        # 回傳看似正常的 AccountInfo。
+        equity = self._cash
+        for position in self._positions.values():
+            if not all(
+                _is_finite_number(value)
+                for value in (
+                    position.quantity,
+                    position.avg_price,
+                    position.market_price,
+                )
+            ):
+                raise ValueError("紙上帳戶部位含非有限數字")
+            mark = self._prices.get(position.symbol, position.avg_price)
+            if not _is_finite_number(mark) or mark <= 0:
+                raise ValueError("紙上帳戶報價不是有限正數")
+            position_value = position.quantity * mark
+            if not _is_finite_number(position_value):
+                raise ValueError("紙上帳戶部位市值不是有限數字")
+            next_equity = equity + position_value
+            if not _is_finite_number(next_equity):
+                raise ValueError("紙上帳戶權益計算結果不是有限數字")
+            equity = next_equity
         return AccountInfo(cash=self._cash, equity=equity, currency=self._currency)
 
     def get_positions(self) -> list[Position]:
@@ -110,21 +146,57 @@ class PaperBroker(BrokerAdapter):
         order.validate()
 
         ref_price = self.get_price(order.symbol)
-        # 市價單套用滑價,限價單以限價成交
+        if not _is_finite_number(ref_price) or ref_price <= 0:
+            raise ValueError("報價必須是有限且大於 0 的數字")
+
+        # 市價單套用滑價;限價單僅在「當下可立即成交」時以現價撮合(無掛單佇列)
         if order.order_type == OrderType.MARKET:
             slip = self._slippage if order.side == OrderSide.BUY else -self._slippage
             fill_price = ref_price * (1 + slip)
         else:
-            fill_price = order.limit_price or ref_price
+            limit = float(order.limit_price)  # validate() 已保證有限正數
+            if order.side == OrderSide.BUY and limit < ref_price:
+                return OrderResult(
+                    ok=False,
+                    message=(
+                        f"買進限價 {limit:g} 低於現價 {ref_price:g},目前無法立即成交。"
+                        " immediate-fill simulation has no pending orders;"
+                        " 非可立即成交的限價單已拒單,帳戶狀態未變。"
+                    ),
+                )
+            if order.side == OrderSide.SELL and limit > ref_price:
+                return OrderResult(
+                    ok=False,
+                    message=(
+                        f"賣出限價 {limit:g} 高於現價 {ref_price:g},目前無法立即成交。"
+                        " immediate-fill simulation has no pending orders;"
+                        " 非可立即成交的限價單已拒單,帳戶狀態未變。"
+                    ),
+                )
+            # 可立即成交:以現價成交,且不超過買進上限 / 不低於賣出下限
+            if order.side == OrderSide.BUY:
+                fill_price = min(ref_price, limit)
+            else:
+                fill_price = max(ref_price, limit)
 
         notional = fill_price * order.quantity
         fee = abs(notional) * self._fee_rate
+        if (
+            not _is_finite_number(fill_price)
+            or fill_price <= 0
+            or not _is_finite_number(notional)
+            or notional <= 0
+            or not _is_finite_number(fee)
+        ):
+            return OrderResult(ok=False, message="成交金額計算結果無效,拒單且未改動帳戶")
 
         signed_qty = order.quantity if order.side == OrderSide.BUY else -order.quantity
 
         if order.side == OrderSide.BUY:
             # 買進:扣現金(含手續費)
             cost = notional + fee
+            if not _is_finite_number(cost):
+                return OrderResult(ok=False, message="成交金額計算結果非有限數字,拒單且未改動帳戶")
             if cost > self._cash:
                 return OrderResult(
                     ok=False, message=f"資金不足:需 {cost:,.2f},現金 {self._cash:,.2f}"
@@ -135,7 +207,9 @@ class PaperBroker(BrokerAdapter):
             # 與其給出錯誤的現金/權益數字,預設誠實拒單。
             held = self._positions.get(order.symbol)
             held_qty = held.quantity if held else 0.0
-            if not self._allow_short and order.quantity > held_qty + 1e-9:
+            # 不能以 epsilon 放行任何裸空；例如空持倉賣出 5e-10，雖小仍是
+            # 真正的超賣，且會留下難以察覺的微小空單。
+            if not self._allow_short and order.quantity > held_qty:
                 return OrderResult(
                     ok=False,
                     message=(
@@ -146,9 +220,24 @@ class PaperBroker(BrokerAdapter):
                 )
             # 平多倉 / (allow_short 時)開空:回收賣出金額,扣手續費
             cost = -notional + fee
+            if not _is_finite_number(cost):
+                return OrderResult(ok=False, message="成交金額計算結果非有限數字,拒單且未改動帳戶")
 
-        self._cash -= cost
-        self._apply_fill(order.symbol, signed_qty, fill_price)
+        new_cash = self._cash - cost
+        if not _is_finite_number(new_cash):
+            return OrderResult(ok=False, message="現金結算結果非有限數字,拒單且未改動帳戶")
+
+        # 在任何帳戶狀態變更前先完整預演部位。除了數量，舊成本、總成本與
+        # 加權平均價也都可能在極端有限輸入下溢位成 inf，必須一併擋下。
+        try:
+            preview_position = self._preview_fill(
+                order.symbol, signed_qty, fill_price
+            )
+        except ValueError as exc:
+            return OrderResult(ok=False, message=f"{exc},拒單且未改動帳戶")
+
+        self._cash = new_cash
+        self._positions[order.symbol] = preview_position
 
         # 若這筆成交讓部位變成淨空單,附上放空的簡化模型免責說明
         pos_after = self._positions.get(order.symbol)
@@ -168,8 +257,10 @@ class PaperBroker(BrokerAdapter):
         self.fills.append(result)
         return result
 
-    def _apply_fill(self, symbol: str, signed_qty: float, price: float) -> None:
-        """更新持倉的加權平均成本。
+    def _preview_fill(
+        self, symbol: str, signed_qty: float, price: float
+    ) -> Position:
+        """不改狀態地計算成交後持倉，所有算術通過後才由呼叫端提交。
 
         正確處理四種情形:
           1. 無部位 / 部位已平 → 直接建立新部位
@@ -181,31 +272,41 @@ class PaperBroker(BrokerAdapter):
         """
         pos = self._positions.get(symbol)
         if pos is None or pos.quantity == 0:
-            self._positions[symbol] = Position(symbol, signed_qty, price, price)
-            return
+            if not _is_finite_number(signed_qty):
+                raise ValueError("持倉數量計算結果非有限數字")
+            return Position(symbol, signed_qty, price, price)
+
+        if not all(
+            _is_finite_number(value)
+            for value in (pos.quantity, pos.avg_price, pos.market_price)
+        ):
+            raise ValueError("既有持倉含非有限數字")
 
         new_qty = pos.quantity + signed_qty
+        if not _is_finite_number(new_qty):
+            raise ValueError("持倉數量計算結果非有限數字")
 
         # 完全平倉
         if new_qty == 0:
-            pos.quantity = 0
-            pos.market_price = price
-            return
+            return Position(symbol, 0.0, pos.avg_price, price)
 
         same_direction = (pos.quantity > 0) == (signed_qty > 0)
         if same_direction:
             # 情形 2:同向加碼 → 加權平均
             total_cost = pos.avg_price * pos.quantity + price * signed_qty
-            pos.avg_price = total_cost / new_qty
+            if not _is_finite_number(total_cost):
+                raise ValueError("持倉加權成本計算結果非有限數字")
+            new_avg = total_cost / new_qty
+            if not _is_finite_number(new_avg) or new_avg <= 0:
+                raise ValueError("持倉平均成本計算結果無效")
         elif (new_qty > 0) == (pos.quantity > 0):
             # 情形 3:反向減碼但未超量(方向不變)→ 均價維持原值
-            pass
+            new_avg = pos.avg_price
         else:
             # 情形 4:反向超量(方向翻轉)→ 剩餘部位以本次成交價為新均價
-            pos.avg_price = price
+            new_avg = price
 
-        pos.quantity = new_qty
-        pos.market_price = price
+        return Position(symbol, new_qty, new_avg, price)
 
     def cancel_order(self, order_id: str) -> bool:
         # 紙上模擬為立即成交,無掛單可取消

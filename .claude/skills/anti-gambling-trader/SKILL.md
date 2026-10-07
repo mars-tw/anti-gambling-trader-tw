@@ -22,12 +22,15 @@ description: >-
 
 | 使用者會怎麼說 | 指令 | 轉述紀律(一句話) |
 |---|---|---|
+| 第一次用 / 我該從哪開始 | `start` | 依手上素材分流，不要求使用者先理解全部指令 |
+| 幫我快速判斷適不適合交易 | `fit-check <交易檔>` | 只分「停手/紙上/極小額驗證」；沒有完整紀錄最多只能紙上模擬 |
+| 我不會填表格 / 幫我記一筆 | `record [--out my_trades.csv]` | 一筆=一筆已平倉交易；策略填當時理由，不准事後美化 |
 | 幫我看對帳單 / 我這套賺不賺 | `analyze <檔案> [--market ...]` | 一句話裁決 → 期望值/雙 p 值/樣本外 → 警訊;🛡 反詐提醒必轉達 |
 | 我是不是在賭博 / 只是運氣好? | `analyze <檔案>` | luck_suspected =「無法排除是運氣」,不是「你沒本事」 |
 | 哪一招在送錢 / 跟單有沒有賺 | `analyze`(讀【各策略體檢】【跟單成績單】) | per-tag 只有描述統計,**不可**說某招「有優勢」 |
 | 一次看完整體檢 | `analyze <檔案> --full --equity <本金>` | 主報告 + 時間趨勢 + 風險情境,警語自動附上 |
 | 這老師可信嗎(勝率90%…) | `guru-check --win-rate 0.9 --trades N ...` | 機率語氣,絕不說「他一定是騙子」;沒 --trades 先要這個數字 |
-| 這訊息是詐騙嗎(貼對話) | `scan-text "文字"` 或 `--file 對話.txt` | 序數等級,不轉百分比;「低」≠安全 |
+| 這訊息是詐騙嗎 / LINE 對話紀錄 | `scan-text "文字"` 或 `--file LINE對話.txt` | 序數等級,不轉百分比;「低」≠安全；轉述發言者/時間/原句/理由 |
 | 老師連續猜對 N 次好神 | `survivorship --traders 1000 --streak N` | 是對「現象」的數學解釋,非對特定人的指控 |
 | 這是他的月報酬,是不是假的 | `forensics 0.02,0.03,... [--periods-per-year 12]` | 只說「可疑徵兆」,每項附帶的「不代表什麼」要一起講 |
 | 被拉進群 / 要升級VIP / 出金繳稅 | `scam-check`(互動式,使用者親自跑) | 已被要求匯款 → 直接建議撥 165,不等工具 |
@@ -42,7 +45,8 @@ description: >-
 | 建我的交易程式 / 接券商 | `scaffold --name my_bot --broker <key> --chart <key> [--from-analysis ...]` | 產出是待填框架,預設紙上模擬;建議帶 --from-analysis |
 | 有哪些券商/圖表可選 | `brokers` / `charts` / `chart-preview` | 清單以指令即時輸出為準,不憑記憶列舉 |
 | 幫我用真錢下單 / 填 API key / 關閘門 | (無指令 — 婉拒) | 紅線:可協助寫程式與解釋機制,絕不代執行、代填金鑰、代解閘門 |
-| 老師給我看績效截圖 | 依素材:報酬序列→`forensics`;宣稱數字→`guru-check`;連勝→`survivorship` | 截圖是倖存者偏差的載體;沒有完整連續紀錄,任何工具都無法驗證 |
+| 我有券商/圖表截圖，幫我抓點位與技術 | `scan-screenshot <圖片>`；已有 OCR 文字用 `--text` | 低信心不自動填；技術詞只算文字線索；單張截圖不能驗證績效 |
+| 老師給我看績效截圖 | 先 `scan-screenshot`;依素材:報酬序列→`forensics`;宣稱數字→`guru-check`;連勝→`survivorship` | 截圖是倖存者偏差的載體;沒有完整連續紀錄,任何工具都無法驗證 |
 
 ## 通用誠實紀律(跨指令紅線)
 
@@ -57,6 +61,8 @@ description: >-
 8. **不自行美化**:不另寫摘要或圖卡取代工具輸出(會繞過內建的誠實措辭)。
 9. **範例要標明**:demo / --example 的結果必須說是內建範例。
 10. **真錢紅線**:不代下單、不代填金鑰、不代解安全閘門。
+11. **截圖一定覆核**:OCR 信心只是文字抽取規則分數，不是正確率；正負號、小數點、方向、張/股/口都要對原圖。
+12. **適合度不靠問卷認證**:`fit-check` 必須讀完整連續交易紀錄；即使樣本內與樣本外都通過，也只可說「考慮極小額驗證」。
 
 ## analyze 主流程
 
@@ -109,8 +115,18 @@ forensics=可疑、risk-sim=爆倉路徑>10%),錯誤回 `1`,其餘 `0`。
 ## 反詐四件套速查
 
 - `scan-text`:支援簡體話術(「保证获利」也抓得到)、Big5 檔自動回退。
-  跨平台首選 `scan-text --file 對話.txt`;管線輸入 POSIX 用
+  可解析 LINE 匯出標頭，並只組合同一發言者、同日、10 分鐘內的拆句；
+  跨平台首選 `scan-text --file LINE對話.txt`;管線輸入 POSIX 用
   `cat 對話.txt | ... scan-text`,PowerShell 用 `Get-Content 對話.txt | ... scan-text`。
+- `scan-screenshot`:圖片 OCR 為可選功能(`Pillow + pytesseract`，系統另需 Tesseract
+  與繁中字庫)；沒有 OCR 時可用手機複製圖片文字後傳 `--text`。只有高信心且
+  無衝突的欄位可預填，仍需人工覆核；`lot/share/contract` 單位不可混寫，
+  百分比損益不可當金額 pnl；數量沒有股/張/口/幣單位時不得預填。任何 OCR 結果
+  都必須人工逐欄覆核。突破/均線/RSI/MACD 等只標成文字線索，不認證策略。
+- `record` / direct pnl:必須明示帳戶結算幣別，且為已扣手續費/稅/滑價的淨損益；
+  不同幣別不得相加，direct pnl 不再自動估費、推測幣別或重複扣費。方向未知可
+  留白；只有用價差推算時才必須明示做多/做空。模糊的 `realized_pnl/已實現損益`
+  欄需改成明示淨額的欄名，或用 `--field pnl=...` 親自確認。
 - `guru-check`:對長期上漲標的(如美股大盤)把 `--null-win-prob` 調高至
   0.55~0.62,避免對多頭市場過度嚴苛 —— 連工具的保守都要誠實。
 - `forensics`:先問資料是月報酬(--periods-per-year 12)還是日報酬(252),
@@ -133,8 +149,9 @@ forensics=可疑、risk-sim=爆倉路徑>10%),錯誤回 `1`,其餘 `0`。
   美股:IBKR/Alpaca/Tradier;加密:Binance/Pionex/OKX/Bybit/ccxt),真實券商為
   待填框架;Pionex 官方現貨規格未列 sandbox,必須先用 PaperBroker;台灣券商 API 多需
   臨櫃簽署與數個工作天審核。
-- 四層安全:預設 PaperBroker、真實下單需雙重明確確認、裁決勸退時預設禁用；
-  生成的歷史/示範 replay 偵測到 live broker 會硬退出。
+- 四層安全:預設 PaperBroker、真實下單需雙重明確確認；設定檔只有在樣本外延續、
+  幣別與風險基準皆可靠，且 stage=`tiny_live_validation` 時才可能開啟 live 旗標，
+  其餘情況一律禁用；生成的歷史/示範 replay 偵測到 live broker 會硬退出。
 
 ## 資料與環境備註
 
@@ -149,6 +166,13 @@ forensics=可疑、risk-sim=爆倉路徑>10%),錯誤回 `1`,其餘 `0`。
   follow_guru / counterfactual / breakeven。CLI 同時帶 `--full --json` 時,
   JSON 另含 `full_extras`(trend / risk_scenario / 略過原因)。
 - 核心零依賴;.xlsx 需 openpyxl;跑回測骨架需 backtrader 或 vectorbt。
+
+## 資料隱私與統計解讀邊界
+
+- 直接使用 CLI 分析時，資料留在本機；若改用雲端 AI 協助，檔案內容或工具輸出可能會送至該提供者。
+- 送出前請遮蔽姓名、帳號、訂單編號與其他可識別資訊。
+- 有被拒列或尚未釐清的精確重複列時，不得宣稱存在正向優勢，也不得據此判定適合實盤。
+- p 值不等於「不是運氣」的證明；統計顯著也不能單獨證明未來可重複。
 
 ## 免責
 

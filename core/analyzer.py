@@ -73,6 +73,7 @@ class AnalysisResult:
         return sanitize_json({
             "source": self.log.source,
             "markets": sorted(m.value for m in self.log.markets),
+            "integrity": self.log.integrity_as_dict(),
             "verdict": self.verdict.as_dict(),
             "stage": {
                 "code": stage.code,

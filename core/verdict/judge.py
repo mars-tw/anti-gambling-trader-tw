@@ -210,6 +210,9 @@ def judge(
     Returns:
         Verdict
     """
+    # TradeLog.trades 是公開可變 list；先重新檢查，避免建構後 append / extend
+    # 的精確重複列被舊計數略過而誤判成正優勢。
+    log.refresh_integrity()
     m = metrics or compute_metrics(log)
     pnls = [t.pnl or 0.0 for t in log]
     sig = test_expectancy_positive(pnls, n_bootstrap=n_bootstrap)
@@ -228,6 +231,21 @@ def judge(
 
     flags = _scan_red_flags(m, sig)
 
+    rejected_rows = int(getattr(log, "rejected_row_count", 0) or 0)
+    duplicate_rows = int(getattr(log, "suspected_duplicate_count", 0) or 0)
+    if rejected_rows:
+        flags.append(RedFlag(
+            "incomplete_input", "high",
+            f"原始資料有 {rejected_rows} 列被拒絕載入。保留下來的交易可能不是完整樣本，"
+            "目前只能做描述性閱讀，不得據此認證正優勢。",
+        ))
+    if duplicate_rows:
+        flags.append(RedFlag(
+            "suspected_exact_duplicates", "high",
+            f"偵測到 {duplicate_rows} 列完整且時間已知的精確重複交易。"
+            "工具不會自行刪除或猜測哪列是真的；在來源釐清前不得認證正優勢。",
+        ))
+
     reasons: list[str] = []
     advice: list[str] = []
 
@@ -235,11 +253,46 @@ def judge(
 
     # ── 決策樹(由最嚴重往下判斷)──────────────────────────
 
+    # 0. 完整性保留 → 被拒列或精確重複都可能選擇性扭曲樣本。
+    #    不自行刪除、不把 retained-only 統計升格為優勢，也不進樣本外切分。
+    if rejected_rows or duplicate_rows:
+        level = VerdictLevel.INSUFFICIENT
+        discourage = True
+        parts = []
+        if rejected_rows:
+            parts.append(f"{rejected_rows} 列被拒絕")
+        if duplicate_rows:
+            parts.append(f"{duplicate_rows} 列疑似精確重複")
+        issue_text = "、".join(parts)
+        headline = (
+            f"⚠️ 資料完整性未通過（{issue_text}）：目前僅能把保留列當描述性樣本，"
+            "不能判定存在可重複優勢。"
+        )
+        if rejected_rows:
+            reasons.append(
+                f"載入時拒絕了 {rejected_rows} 列。被拒列可能與盈虧相關，"
+                "只看成功保留的列會產生選擇偏差。"
+            )
+            for reason in tuple(getattr(log, "rejected_row_reasons", ()))[:3]:
+                reasons.append(f"拒絕原因：{reason}")
+        if duplicate_rows:
+            reasons.append(
+                f"完整欄位與進出場時間相同的交易有 {duplicate_rows} 個重複列；"
+                "未經來源核對前，重複列可能人為放大樣本數與顯著性。"
+            )
+        reasons.append(
+            "因此以下數字只描述目前保留下來的列，不代表完整紀錄，也不能用來解鎖真錢階段。"
+        )
+        advice += [
+            "回到原始對帳單逐列修正被拒資料，並核對精確重複列是否為不同成交；不要先刪掉虧損列。",
+            "資料完整性恢復後再重新分析；在此之前只做紙上模擬。",
+        ]
+
     # A. 樣本不足 → 不論帳面好壞,都先承認「還不知道」。
     #    這必須排在負期望之前:小樣本的負期望同樣可能只是運氣,
     #    若直接判「賭博、方向錯誤、立刻停止」會與「樣本不足無法判斷」
     #    的原則自相矛盾,且過度武斷。樣本足夠的負期望才判賭博(分支 B)。
-    if m.total_trades < min_trades:
+    elif m.total_trades < min_trades:
         level = VerdictLevel.INSUFFICIENT
         discourage = True   # 樣本不足時也該勸阻「重押」
         if m.expectancy < 0:
