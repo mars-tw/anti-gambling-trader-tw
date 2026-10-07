@@ -194,7 +194,7 @@ anti_gambling:
 
 
 def requirements(chart_lib, broker_tmpl) -> str:
-    lines = ["# 本專案依賴", "pyyaml>=6.0"]
+    lines = ["# -*- coding: utf-8 -*-", "# 本專案依賴", "pyyaml>=6.0"]
     if chart_lib.kind == "python":
         pkg = {"plotly": "plotly>=5.0",
                "mplfinance": "mplfinance>=0.12\npandas>=1.5"}.get(chart_lib.key)

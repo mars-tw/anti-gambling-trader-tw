@@ -11,7 +11,7 @@
 - **真實交易閘門不夠嚴格**：只有布林值 `True` 能確認解鎖；Alpaca／Tradier 撤單也先檢查閘門。以 Mock 驗證未解鎖時沒有外部呼叫。
 - **檔案覆寫**：CLI 拒絕輸入／輸出別名、硬連結與重複輸出；scaffold 保護既有專案、限制生成路徑，並以 exclusive create 防止檢查後才出現的檔案被覆寫。
 - **文件與開發流程**：修正 p 值、bootstrap 假設、模擬解析度／誤差與回溯驗證的敘述；區分本機 CLI、雲端 AI、CDN 與券商 API 的資料流。兩份技能同步，補齊開發依賴與跨平台 CI。
-- **Windows 獨立程式編碼**：遠端 CI 重現生成程式在 CP1252 終端機因中文輸出崩潰；生成程式現在於執行時設定 UTF-8 輸出，保留匯入時的串流設定。
+- **Windows 獨立程式編碼**：遠端 CI 重現生成程式在 CP1252 終端機因中文輸出崩潰；生成程式現在於執行時設定 UTF-8 輸出，保留匯入時的串流設定。生成的依賴檔也加入 [pip 支援的編碼宣告](https://pip.pypa.io/en/stable/reference/requirements-file-format/#encoding)，讓舊版 pip 正確讀取中文註解。
 
 ## 已完成的驗證
 
