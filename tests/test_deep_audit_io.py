@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -221,6 +223,35 @@ def test_cli_scaffold_existing_nonempty_root_is_normal_nonzero(tmp_path, capsys)
     captured = capsys.readouterr()
     assert "已存在且非空" in captured.err
     assert "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize("io_encoding", ["ascii", "cp1252", "cp950"])
+def test_generated_paper_main_forces_utf8_output_under_windows_encodings(
+    tmp_path, io_encoding
+):
+    root = write_project(
+        ScaffoldOptions(project_name="paper_encoding_bot", broker="paper"),
+        tmp_path,
+    )
+    env = os.environ.copy()
+    env.update({"PYTHONUTF8": "0", "PYTHONIOENCODING": io_encoding})
+
+    result = subprocess.run(
+        [sys.executable, "main.py"],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        check=False,
+    )
+    stdout = result.stdout.decode("utf-8")
+    stderr = result.stderr.decode("utf-8")
+
+    assert result.returncode == 0, stderr
+    assert "策略執行完畢（paper 模式）" in stdout
+    assert "最終權益" in stdout
+    assert "成交筆數" in stdout
+    assert "紙上模擬" in (root / "README.md").read_text(encoding="utf-8")
+    assert (root / "chart.html").is_file()
 
 
 def test_skill_copies_are_byte_identical():

@@ -383,6 +383,7 @@ def main_py(opts, chart_lib, broker_tmpl, discouraged: bool) -> str:
 """
 
 import os
+import sys
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 
 import yaml
@@ -395,6 +396,17 @@ from broker_lib import Order, OrderSide, BrokerAdapter
 
 # ── 真實下單總開關(預設關閉,保護你的錢)──
 ALLOW_LIVE_TRADING = {allow_live}
+
+
+def _force_utf8_stdout() -> None:
+    """讓獨立腳架在 Windows 非 UTF-8 管線也能輸出中文。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8")
+            except (ValueError, OSError):
+                pass
 
 
 DEFAULT_CONFIG = {{
@@ -517,6 +529,7 @@ def reject_live_historical_replay(broker: BrokerAdapter) -> None:
 
 
 def run():
+    _force_utf8_stdout()
     config = load_config()
     broker = build_broker(config)
     maybe_enable_live(broker, config)
