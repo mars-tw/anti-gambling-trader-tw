@@ -124,9 +124,37 @@ def holdout_validate(
     if not 0 < split_ratio < 1:
         raise ValueError(f"split_ratio 必須介於 0 與 1 之間,收到 {split_ratio}")
 
+    # TradeLog.trades 是公開可變 list；切分前重新檢查，不能讓建構後加入的
+    # 重複列繞過完整性保留而被分成看似獨立的樣本內／外資料。
+    log.refresh_integrity()
     raw = list(log)
     n = len(raw)
     interp: list[str] = []
+
+    rejected_rows = int(getattr(log, "rejected_row_count", 0) or 0)
+    duplicate_rows = int(getattr(log, "suspected_duplicate_count", 0) or 0)
+    if rejected_rows or duplicate_rows:
+        issues: list[str] = []
+        if rejected_rows:
+            issues.append(f"{rejected_rows} 列被拒絕載入")
+        if duplicate_rows:
+            issues.append(f"{duplicate_rows} 列疑似精確重複")
+        issue_text = "、".join(issues)
+        empty_sig = SignificanceResult(0, 0, 0, 0, 1.0, 1.0, 0, 0, False)
+        seg = SegmentResult("資料完整性未通過", n, 0, 0, 0, 0, empty_sig)
+        return OutOfSampleReport(
+            in_sample=seg,
+            out_sample=seg,
+            edge_persisted=False,
+            degradation=1.0,
+            headline=f"⚠️ 資料完整性未通過（{issue_text}），不執行樣本外切分。",
+            interpretation=[
+                "被拒列可能造成選擇偏差，精確重複列也可能放大樣本數與顯著性。",
+                "工具保留問題計數、不自行刪除或去重；請先回到原始對帳單逐列核對。",
+            ],
+            available=False,
+            unavailable_reason=f"資料完整性未通過：{issue_text}",
+        )
 
     # 只要混入一筆未知出場時間,整份紀錄就沒有可信的完整時序。
     # 不可靜默丟掉未知列(會改變樣本),也不可拿 placeholder 排在最前面後硬切。

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
@@ -87,6 +88,23 @@ class Trade:
     pnl_is_direct: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
+        numeric_fields = (
+            ("entry_price", self.entry_price),
+            ("exit_price", self.exit_price),
+            ("quantity", self.quantity),
+            ("fees", self.fees),
+            ("contract_multiplier", self.contract_multiplier),
+        )
+        if self.pnl is not None:
+            numeric_fields += (("pnl", self.pnl),)
+        for name, value in numeric_fields:
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+            ):
+                raise ValueError(f"{name} 必須是有限數字（bool 不算金融數值）")
+
         self.pnl_is_direct = self.pnl is not None
         if (
             self.market in (Market.TW_FUTURES, Market.TW_OPTIONS)
@@ -128,7 +146,10 @@ class Trade:
             )
             if self.side == Side.SHORT:
                 gross = -gross
-            self.pnl = gross - self.fees
+            computed_pnl = gross - self.fees
+            if not math.isfinite(computed_pnl):
+                raise ValueError("由價差計算出的 pnl 不是有限數字")
+            self.pnl = computed_pnl
 
     @property
     def is_win(self) -> bool:
@@ -197,6 +218,100 @@ class TradeLog:
     trades: list[Trade] = field(default_factory=list)
     source: str = ""           # 資料來源說明(檔名 / API 名稱)
     account_label: str = ""    # 帳戶或策略標籤
+    rejected_row_count: int = 0
+    rejected_row_reasons: tuple[str, ...] = field(default_factory=tuple)
+    suspected_duplicate_count: int = 0
+    _inherited_duplicate_hold: int = field(default=0, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.rejected_row_count, bool)
+            or not isinstance(self.rejected_row_count, int)
+            or self.rejected_row_count < 0
+        ):
+            raise ValueError("rejected_row_count 必須是非負整數")
+        if (
+            isinstance(self.suspected_duplicate_count, bool)
+            or not isinstance(self.suspected_duplicate_count, int)
+            or self.suspected_duplicate_count < 0
+        ):
+            raise ValueError("suspected_duplicate_count 必須是非負整數")
+        # 原因只保留有限預覽，完整筆數由 rejected_row_count 表示；這避免
+        # 巨型髒檔把報告/JSON 撐爆，同時不會把被拒筆數靜默抹掉。
+        self.rejected_row_reasons = tuple(
+            str(reason) for reason in self.rejected_row_reasons[:10]
+        )
+        # 此欄是來源或父 TradeLog 已知的完整性下限；不可因 filter / sort
+        # 把重複列從眼前清掉就當成已完成修復。真正修復後應建立新的 TradeLog
+        # 重新稽核原始資料，而不是原地抹除風險旗標。
+        self._inherited_duplicate_hold = self.suspected_duplicate_count
+        self.refresh_integrity()
+
+    def _detect_exact_duplicate_count(self) -> int:
+        """計算完整且時間已知之交易中，超出第一筆的精確重複列數。"""
+
+        seen: set[tuple] = set()
+        duplicates = 0
+        for trade in self.trades:
+            if not (
+                getattr(trade, "entry_time_known", True)
+                and getattr(trade, "exit_time_known", True)
+            ):
+                # pnl-only 佔位時間相同不代表同一筆交易，不能據此誤判重複。
+                continue
+            key = (
+                trade.symbol,
+                trade.market,
+                trade.side,
+                trade.entry_time,
+                trade.exit_time,
+                trade.entry_price,
+                trade.exit_price,
+                trade.quantity,
+                trade.fees,
+                trade.pnl,
+                repr(trade.tag),
+                trade.contract_multiplier,
+                trade.entry_time_known,
+                trade.exit_time_known,
+                trade.contract_multiplier_known,
+                trade.notional_reliable,
+                trade.pnl_currency,
+                trade.side_known,
+                trade.entry_local_date,
+                trade.exit_local_date,
+                trade.pnl_is_direct,
+            )
+            if key in seen:
+                duplicates += 1
+            else:
+                seen.add(key)
+        return duplicates
+
+    def refresh_integrity(self) -> int:
+        """重新檢查可變 trades，保留繼承或已觀測到的重複風險下限。"""
+        detected = self._detect_exact_duplicate_count()
+        self._inherited_duplicate_hold = max(
+            self._inherited_duplicate_hold,
+            detected,
+        )
+        self.suspected_duplicate_count = self._inherited_duplicate_hold
+        return self.suspected_duplicate_count
+
+    @property
+    def integrity_complete(self) -> bool:
+        self.refresh_integrity()
+        return self.rejected_row_count == 0 and self.suspected_duplicate_count == 0
+
+    def integrity_as_dict(self) -> dict:
+        self.refresh_integrity()
+        return {
+            "status": "complete" if self.integrity_complete else "incomplete",
+            "complete": self.integrity_complete,
+            "rejected_row_count": self.rejected_row_count,
+            "rejected_row_reasons": list(self.rejected_row_reasons),
+            "suspected_duplicate_count": self.suspected_duplicate_count,
+        }
 
     def __len__(self) -> int:
         return len(self.trades)
@@ -210,24 +325,36 @@ class TradeLog:
 
     def filter_by_tag(self, tag: str) -> "TradeLog":
         """只取某個策略標籤的交易,用於分策略評估。"""
+        self.refresh_integrity()
         return TradeLog(
             trades=[t for t in self.trades if t.tag == tag],
             source=self.source,
             account_label=f"{self.account_label}::{tag}",
+            rejected_row_count=self.rejected_row_count,
+            rejected_row_reasons=self.rejected_row_reasons,
+            suspected_duplicate_count=self.suspected_duplicate_count,
         )
 
     def filter(self, predicate, label: str = "filtered") -> "TradeLog":
         """用任意述詞篩選交易(如『跟單類 tag』或『排除最差策略』)。"""
+        self.refresh_integrity()
         return TradeLog(
             trades=[t for t in self.trades if predicate(t)],
             source=self.source,
             account_label=f"{self.account_label}::{label}",
+            rejected_row_count=self.rejected_row_count,
+            rejected_row_reasons=self.rejected_row_reasons,
+            suspected_duplicate_count=self.suspected_duplicate_count,
         )
 
     def sorted_by_time(self) -> "TradeLog":
         """依出場時間排序。回測與回撤計算需要時間順序。"""
+        self.refresh_integrity()
         return TradeLog(
             trades=sorted(self.trades, key=lambda t: t.exit_time),
             source=self.source,
             account_label=self.account_label,
+            rejected_row_count=self.rejected_row_count,
+            rejected_row_reasons=self.rejected_row_reasons,
+            suspected_duplicate_count=self.suspected_duplicate_count,
         )

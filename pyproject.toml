@@ -26,7 +26,7 @@ dependencies = []
 excel = ["openpyxl>=3.1"]
 screenshot = ["Pillow>=10.0", "pytesseract>=0.3.10"]
 backtest = ["backtrader>=1.9", "vectorbt>=0.26"]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "PyYAML>=6.0"]
 
 [project.scripts]
 anti-gambling-trader = "core.cli:main"

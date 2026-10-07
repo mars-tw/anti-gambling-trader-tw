@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -27,14 +27,21 @@ from core.verdict.statistics import (  # noqa: E402
 EXAMPLES = Path(__file__).resolve().parent.parent / "core" / "examples"
 
 
-def _make_trade(pnl: float, *, win_days: float = 1.0, tag: str | None = None) -> Trade:
+def _make_trade(
+    pnl: float,
+    *,
+    win_days: float = 1.0,
+    tag: str | None = None,
+    day_offset: int = 0,
+) -> Trade:
     """造一筆指定損益的交易(直接給 pnl,跳過價格推算)。"""
+    entry = datetime(2024, 1, 1) + timedelta(days=day_offset)
     return Trade(
         symbol="TEST",
         market=Market.US_STOCK,
         side=Side.LONG,
-        entry_time=datetime(2024, 1, 1),
-        exit_time=datetime(2024, 1, 1 + int(win_days)),
+        entry_time=entry,
+        exit_time=entry + timedelta(days=win_days),
         entry_price=100.0,
         exit_price=100.0 + pnl / 10,
         quantity=10.0,
@@ -144,7 +151,8 @@ def test_required_sample_size_negative_edge():
 # ── 裁決 ─────────────────────────────────────────────────────
 def test_verdict_negative_expectancy_is_gambling():
     # 樣本足夠(>= 30 筆)+ 負期望 → 判賭博
-    log = TradeLog([_make_trade(10)] * 10 + [_make_trade(-50)] * 40)
+    pnls = [10] * 10 + [-50] * 40
+    log = TradeLog([_make_trade(pnl, day_offset=i) for i, pnl in enumerate(pnls)])
     v = judge(log, n_bootstrap=1000)
     assert v.level == VerdictLevel.GAMBLING
     assert v.should_discourage
@@ -154,7 +162,8 @@ def test_verdict_negative_expectancy_is_gambling():
 def test_verdict_small_sample_negative_is_insufficient_not_gambling():
     # 樣本不足(< 30 筆)即使帳面為負,也不該武斷判賭博,應歸樣本不足。
     # 這是修正後的行為:與「樣本不足無法判斷」的原則一致。
-    log = TradeLog([_make_trade(10)] * 5 + [_make_trade(-50)] * 15)
+    pnls = [10] * 5 + [-50] * 15
+    log = TradeLog([_make_trade(pnl, day_offset=i) for i, pnl in enumerate(pnls)])
     v = judge(log, n_bootstrap=1000)
     assert v.level == VerdictLevel.INSUFFICIENT
     assert v.should_discourage  # 仍勸阻重押
@@ -172,7 +181,9 @@ def test_verdict_insufficient_sample():
 def test_verdict_clear_edge_not_discouraged():
     # 大量、穩定、正期望、低變異:應認證為優勢
     pnls = [100, 120, 90, 110, 130, -40, 105, 115, 100, 125] * 5
-    log = TradeLog([_make_trade(p) for p in pnls])
+    log = TradeLog([
+        _make_trade(p, day_offset=i) for i, p in enumerate(pnls)
+    ])
     v = judge(log, n_bootstrap=2000)
     assert v.level == VerdictLevel.STATISTICAL_EDGE
     assert not v.should_discourage

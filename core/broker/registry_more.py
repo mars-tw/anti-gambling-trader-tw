@@ -889,6 +889,7 @@ class TradierBroker(BrokerAdapter):
         return OrderResult(ok=ok, order_id=str(resp.get("id", "")), raw=resp)
 
     def cancel_order(self, order_id: str) -> bool:
+        self._guard_live()
         import requests
         resp = requests.delete(
             f"{{self.base}}/accounts/{{self.account_id}}/orders/{{order_id}}",

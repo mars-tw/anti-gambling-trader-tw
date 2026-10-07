@@ -132,7 +132,11 @@ def test_oos_cannot_claim_persistence_without_in_sample_significance():
 
 
 def test_oos_refuses_missing_time_instead_of_using_row_order():
-    trades = [_trade(10.0, 0) for _ in range(30)]
+    trades = []
+    for i in range(30):
+        trade = _trade(10.0, 0)
+        trade.symbol = f"MISSING-TIME-{i}"
+        trades.append(trade)
     report = holdout_validate(TradeLog(trades), n_bootstrap=100)
     assert not report.edge_persisted
     assert not report.available
@@ -200,8 +204,15 @@ def test_oos_refuses_to_compare_different_pnl_currencies():
 
 def test_oos_split_never_separates_identical_exit_times():
     # 70/30 目標落在第二個時間群內;唯一無洩漏的切點是 20/80。
-    trades = [_trade(10.0, 0) for _ in range(20)]
-    trades += [_trade(10.0, 1) for _ in range(80)]
+    trades = []
+    for i in range(20):
+        trade = _trade(10.0, 0)
+        trade.symbol = f"DAY0-{i}"
+        trades.append(trade)
+    for i in range(80):
+        trade = _trade(10.0, 1)
+        trade.symbol = f"DAY1-{i}"
+        trades.append(trade)
     report = holdout_validate(TradeLog(trades), n_bootstrap=100)
     assert report.in_sample.n_trades == 20
     assert report.out_sample.n_trades == 80

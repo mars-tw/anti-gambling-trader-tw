@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-build-and-relocate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install development dependencies
+        run: python -m pip install -e .[dev] build
+
+      - name: Run complete offline test suite
+        run: python -m pytest -q -p no:cacheprovider
+
+      - name: Build wheel
+        run: python -m build --wheel
+
+      - name: Install relocated wheel and smoke CLI plus generated paper project
+        shell: python {0}
+        run: |
+          import os
+          import subprocess
+          import sys
+          import tempfile
+          import venv
+          from pathlib import Path
+
+          workspace = Path.cwd().resolve()
+          wheel = next((workspace / "dist").glob("*.whl"))
+          temp_parent = os.environ.get("RUNNER_TEMP")
+          with tempfile.TemporaryDirectory(dir=temp_parent) as raw_temp:
+              temp = Path(raw_temp)
+              environment = temp / "wheel-venv"
+              venv.EnvBuilder(with_pip=True).create(environment)
+              python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+              external = temp / "external-cwd"
+              external.mkdir()
+              env = os.environ.copy()
+              env.pop("PYTHONPATH", None)
+
+              subprocess.run(
+                  [str(python), "-m", "pip", "install", str(wheel)],
+                  cwd=external,
+                  env=env,
+                  check=True,
+              )
+              for command in (["start"], ["demo"]):
+                  subprocess.run(
+                      [str(python), "-m", "core.cli", *command],
+                      cwd=external,
+                      env=env,
+                      check=True,
+                  )
+              subprocess.run(
+                  [
+                      str(python), "-m", "core.cli", "scaffold",
+                      "--name", "wheel-smoke", "--broker", "paper",
+                      "--out", str(external),
+                  ],
+                  cwd=external,
+                  env=env,
+                  check=True,
+              )
+              generated = external / "wheel-smoke"
+              subprocess.run(
+                  [
+                      str(python), "-m", "pip", "install", "-r",
+                      str(generated / "requirements.txt"),
+                  ],
+                  cwd=external,
+                  env=env,
+                  check=True,
+              )
+              subprocess.run(
+                  [str(python), "main.py"],
+                  cwd=generated,
+                  env=env,
+                  check=True,
+              )

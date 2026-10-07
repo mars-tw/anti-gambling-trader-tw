@@ -5,7 +5,7 @@
 
 本模組回答:
     1. 在「老師毫無能力」的前提下,這種績效有多容易靠運氣出現?
-    2. 要多少樣本,才能證明這不是運氣?
+    2. 在指定模型與檢定力假設下,需要多少樣本才可能辨識正期望訊號?
     3. 如果市面上有 N 個自稱老師的人,期望會有幾個人達成這種績效?
     4. 宣稱本身在數學上自相矛盾嗎?(如月報酬 20% 複利的歸謬)
 
@@ -43,6 +43,17 @@ def binomial_tail_ge(n: int, k: int, p: float) -> float:
     舊版逐項累加 math.comb(n, i) 在 n = 10000 時會 OverflowError
     (巨大整數無法轉 float)—— 老師宣稱「一萬筆交易勝率 90%」會讓工具直接崩潰。
     """
+    if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+        raise ValueError("n 必須是非負整數")
+    if isinstance(k, bool) or not isinstance(k, int):
+        raise ValueError("k 必須是整數")
+    if (
+        isinstance(p, bool)
+        or not isinstance(p, (int, float))
+        or not math.isfinite(float(p))
+        or not 0 <= p <= 1
+    ):
+        raise ValueError("p 必須是 0 到 1 的有限數字")
     if k <= 0:
         return 1.0
     if k > n:
@@ -70,6 +81,16 @@ def years_to_own_the_world(
     不是嚴格證明宣稱為假。歸謬的正確結論是「此報酬率無法長期外推」
     (複利發散 vs 有限的市場),不是「此人現在說謊」。措辭必須跟著這個分寸。
     """
+    for name, value in (
+        ("monthly_return", monthly_return),
+        ("start_capital", start_capital),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+        ):
+            raise ValueError(f"{name} 必須是有限數字")
     if monthly_return <= 0 or start_capital <= 0:
         return None
     if start_capital >= WORLD_GDP_TWD:
@@ -133,6 +154,51 @@ def analyze_guru_claim(
         n_gurus_in_market:     市面上有多少人在自稱老師(倖存者偏差的分母)
         null_win_prob:         虛無假設下的單次勝率。預設 0.5。
     """
+    optional_floats = {
+        "claimed_win_rate": claimed_win_rate,
+        "claimed_monthly_return": claimed_monthly_return,
+        "payoff_ratio": payoff_ratio,
+    }
+    for name, value in optional_floats.items():
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+        ):
+            raise ValueError(f"{name} 必須是有限數字")
+    optional_ints = {
+        "claimed_trades": claimed_trades,
+        "claimed_winning_months": claimed_winning_months,
+        "total_months": total_months,
+    }
+    for name, value in optional_ints.items():
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            raise ValueError(f"{name} 必須是非負整數")
+    if (
+        claimed_win_rate is not None
+        and not 0 <= claimed_win_rate <= 1
+    ):
+        raise ValueError("claimed_win_rate 必須介於 0 與 1")
+    if payoff_ratio is not None and payoff_ratio < 0:
+        raise ValueError("payoff_ratio 不可為負")
+    if claimed_monthly_return is not None and claimed_monthly_return <= -1:
+        raise ValueError("claimed_monthly_return 必須大於 -1")
+    if (
+        isinstance(n_gurus_in_market, bool)
+        or not isinstance(n_gurus_in_market, int)
+        or n_gurus_in_market < 1
+    ):
+        raise ValueError("n_gurus_in_market 必須是正整數")
+    if (
+        isinstance(null_win_prob, bool)
+        or not isinstance(null_win_prob, (int, float))
+        or not math.isfinite(float(null_win_prob))
+        or not 0 <= null_win_prob <= 1
+    ):
+        raise ValueError("null_win_prob 必須是 0 到 1 的有限數字")
+
     findings: list[str] = []
     caveats: list[str] = []
 
@@ -209,25 +275,45 @@ def analyze_guru_claim(
         if expected_gurus is None:
             expected_gurus = exp_n
 
-    # ── 3. 需要多少樣本才能證明不是運氣 ──
-    if claimed_win_rate is not None and payoff_ratio is not None and payoff_ratio > 0:
+    expectancy_r: float | None = None
+    expectancy_tolerance = 0.0
+    if claimed_win_rate is not None and payoff_ratio is not None:
+        expectancy_r = claimed_win_rate * payoff_ratio - (1 - claimed_win_rate)
+        expectancy_tolerance = 1e-12 * max(
+            1.0, abs(claimed_win_rate), abs(payoff_ratio)
+        )
+
+    # ── 3. 指定模型下的樣本量估算 ──
+    if (
+        expectancy_r is not None
+        and expectancy_r > expectancy_tolerance
+        and payoff_ratio is not None
+        and payoff_ratio > 0
+    ):
         req_trades = required_sample_size(claimed_win_rate, payoff_ratio)
         if claimed_trades and req_trades > claimed_trades:
             findings.append(
-                f"以他宣稱的勝率與盈虧比,要在統計上證明「這不是運氣」,"
-                f"至少需要約 {req_trades} 筆交易 —— 而他只給了你 {claimed_trades} 筆。"
+                f"以他宣稱的勝率、盈虧比與本工具的檢定力假設估算,"
+                f"約需 {req_trades} 筆才較可能辨識出正期望訊號 —— "
+                f"而他只給了你 {claimed_trades} 筆。這仍不是能力或未來獲利的證明。"
             )
 
-    # ── 4. 內部一致性:宣稱穩賺,但期望值卻是負的?──
-    if claimed_win_rate is not None and payoff_ratio is not None:
-        expectancy_r = claimed_win_rate * payoff_ratio - (1 - claimed_win_rate)
-        if expectancy_r <= 0:
+    # ── 4. 內部一致性:負期望與恰好打平必須分開描述 ──
+    if expectancy_r is not None:
+        if expectancy_r < -expectancy_tolerance:
             contradiction = (
                 f"他宣稱勝率 {claimed_win_rate:.0%}、盈虧比 {payoff_ratio:.2f},"
                 f"但這組數字算出來的每筆期望值是 {expectancy_r:+.3f} R(負的)——"
                 "照他自己給的數字,長期下去是**賠錢**的。宣稱本身自相矛盾。"
             )
             findings.append(f"🔴 {contradiction}")
+        elif abs(expectancy_r) <= expectancy_tolerance:
+            findings.append(
+                f"這組勝率 {claimed_win_rate:.0%}、盈虧比 {payoff_ratio:.2f} "
+                f"算出的每筆期望值約為 {expectancy_r:+.3f} R，屬於損益兩平。"
+                "這不是負期望或自相矛盾，但也沒有提供正優勢證據；"
+                "交易成本或估計誤差都可能使實際結果轉負。"
+            )
 
     # ── 5. 複利歸謬:月報酬 20% 意味著什麼 ──
     if claimed_monthly_return is not None and claimed_monthly_return > 0:
@@ -275,8 +361,8 @@ def analyze_guru_claim(
         "此時應把 null_win_prob 調高,否則會高估他的『神奇程度』。"
     )
     caveats.append(
-        "低機率**不等於**有能力。要證明有能力,唯一的方法是看他"
-        "完整、連續、夠長的交易紀錄(含所有失敗),丟進統計檢定與樣本外驗證。"
+        "低機率**不等於**有能力。較可信的能力證據至少需要"
+        "完整、連續、夠長的交易紀錄(含所有失敗),並持續做可重現的前瞻覆核。"
     )
 
     return GuruClaimAnalysis(

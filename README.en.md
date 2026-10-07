@@ -8,7 +8,12 @@ automated-trading development: feed it your trade history (Taiwan stocks / US st
 and it uses expectancy, significance testing and out-of-sample validation to tell you honestly — whether your profit is a **repeatable edge**
 or **luck plus survivorship bias (gambling)**. It also has built-in scam-language scanning, fake-performance forensics and fake-guru claim checking.
 It can also turn trading logic into backtestable strategy skeletons and generate automated-trading
-projects that can be connected to broker APIs. Trade analysis stays on your computer; nothing is uploaded.
+projects that can be connected to broker APIs. When you run this project's CLI directly, it reads and
+analyzes trade records locally and does not upload them. If you give files, screenshots, or tool output
+to Claude Code or another cloud AI, the content may be transmitted and retained under that provider's
+policy; mask names, account numbers, LINE IDs, and other identifiers first. See the
+[official Claude Code data-usage documentation](https://code.claude.com/docs/en/data-usage).
+Some generated charts load an external CDN, and broker/API paths explicitly connect to their external services.
 
 > A tool that is **honest to the point of being unlikable**. It will not tell you "you will make money" —
 > if your record is not suited to long-term investing, it will plainly talk you out of it.
@@ -229,10 +234,15 @@ See the [full fail-closed matrix](docs/user-guide.md#4-資料不完整時工具�
 
 1. **Expectancy**: average win/loss per trade. **A negative *true* expectancy means a long-run loss in expectation (by mathematical definition);**
    **a negative *sample* expectancy is "treated as gambling until shown otherwise" (a conservative principle) — it is an estimate, so the verdict comes with uncertainty tests attached.**
-2. **Significance testing**: t-test + centered bootstrap (shift method) resampling; only when both give p < 0.05 does it count as "not luck". The p-value = "the probability of results this good arising by pure luck if there were no edge", not "the probability that an edge exists". Deliberately conservative.
+2. **Significance testing**: t-test + centered bootstrap (shift method). Both p-values below 0.05
+   are evidence against a non-positive mean under the stated null and model assumptions. A p-value is
+   the tail probability of an equally or more extreme statistic under that model—not the probability
+   that the null is true, that the result is “chance only,” or that an edge exists. It proves neither
+   future edge nor causal skill, and two tests on the same records are not independent replications.
 3. **Out-of-sample validation**: one real-time cut is used, with at least ten trades on each side and no same-timestamp group split.
-   Both segments must have significant positive expectancy, later degradation must stay below 50%, and the rule must have been frozen before the later data was seen. Missing time, mixed timezones or incomparable currencies cause an explicit refusal instead of a guessed split.
-4. **Gambling-pattern scan**: negative expectancy, results propped up by one outsized win, small wins / large losses, extreme drawdowns, long losing streaks, pure day trading…
+   Both segments must have significant positive expectancy, later degradation must stay below 50%, and the rule must have been frozen before the later data was seen. This retrospective split tests temporal stability; it is not untouched prospective validation. Missing time, mixed timezones, incomparable currencies, rejected rows, or unresolved exact duplicates cause an explicit refusal.
+4. **Integrity gate**: rejected rows and exact duplicates with known timestamps remain counted and disclosed rather than silently removed. Until resolved, the result stays `insufficient` and cannot certify positive edge.
+5. **Gambling-pattern scan**: negative expectancy, results propped up by one outsized win, small wins / large losses, extreme drawdowns, long losing streaks, pure day trading…
 
 ## Build your own automated trading program
 
@@ -312,6 +322,12 @@ queries because an accepted cancel does not prove zero fills. Use explicit symbo
    Tiny live validation requires a separate runner that processes only the latest completed bar from
    a verifiably live data source.
 
+`PaperBroker` is an immediate-fill simulator and has no pending-order queue. A buy limit below the
+current quote or a sell limit above it is rejected; a marketable limit fills at the current quote
+without violating its ceiling/floor. Before writing, the CLI rejects input/output aliases, duplicate
+output paths, and existing report files. `scaffold` never overwrites a non-empty project and has no
+`--force` option.
+
 > The generated historical/demo runner **never submits live orders**. A live adapter can submit only
 > after you implement a live runner, provide the keys and explicitly unlock the safety gates.
 > Real financial trading must be performed by you, at your own full responsibility.
@@ -344,7 +360,7 @@ core/
 .claude/skills/anti-gambling-trader/SKILL.md   # Claude Code skill wrapper
 .agents/skills/anti-gambling-trader/SKILL.md   # Codex/general agent skill wrapper
 core/examples/         # bundled examples for three markets
-tests/                 # 18 test files, 351 tests
+tests/                 # automated regressions (use pytest collection for the current count)
 ```
 
 > **Things we deliberately do not do**: no Benford's-law test (returns include negatives and do not span
@@ -356,6 +372,7 @@ tests/                 # 18 test files, 351 tests
 
 ```bash
 # Run the complete suite (recommended)
+python -m pip install -e ".[dev]"
 python -m pytest tests/ -v
 
 # Without pytest, invoke each test module's built-in runner:
@@ -387,7 +404,7 @@ python tests/test_trade_logic_audit.py
 > Honesty statement: the byline above is a community pseudonym, and the "好棒棒反詐協會" is **not** a registered
 > legal entity or official organization. This project's credibility does not come from titles; it comes from:
 > public source code, reproducible experiments (`experiments/`, fixed seeds), the
-> [full methodology](docs/methodology.md), and 351 automated tests.
+> [full methodology](docs/methodology.md), and continuously run automated regression tests.
 > Anyone is welcome to examine and challenge it — which is exactly what this tool asks the "gurus" to do.
 
 ## License

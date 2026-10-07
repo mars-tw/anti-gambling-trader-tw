@@ -32,6 +32,51 @@ NEGATIVE_EDGE_SENTINEL = 9999
 MAX_BOOTSTRAP_DRAWS = 20_000_000
 
 
+def _finite_numeric_sequence(values, *, label: str) -> list[float]:
+    """Validate public numerical inputs before any short-sample early return."""
+
+    checked: list[float] = []
+    try:
+        iterator = iter(values)
+    except TypeError as exc:
+        raise ValueError(f"{label} 必須是有限數字序列") from exc
+    for index, value in enumerate(iterator):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+        ):
+            raise ValueError(
+                f"{label}[{index}] 必須是有限數字（bool 不算金融數值）"
+            )
+        checked.append(float(value))
+    return checked
+
+
+def _finite_sum(values: list[float], *, label: str) -> float:
+    try:
+        total = math.fsum(values)
+    except OverflowError as exc:
+        raise ValueError(f"{label} 計算溢位") from exc
+    if not math.isfinite(total):
+        raise ValueError(f"{label} 計算結果不是有限數字")
+    return total
+
+
+def _finite_sample_variance(values: list[float], mean: float, *, label: str) -> float:
+    squares: list[float] = []
+    for value in values:
+        delta = value - mean
+        squared = delta * delta
+        if not math.isfinite(delta) or not math.isfinite(squared):
+            raise ValueError(f"{label} 變異數計算溢位")
+        squares.append(squared)
+    variance = _finite_sum(squares, label=f"{label} 變異數") / (len(values) - 1)
+    if not math.isfinite(variance):
+        raise ValueError(f"{label} 變異數計算結果不是有限數字")
+    return variance
+
+
 @dataclass
 class SignificanceResult:
     """期望值顯著性檢定的結果。"""
@@ -143,19 +188,32 @@ def test_expectancy_positive(
     Returns:
         SignificanceResult
     """
-    if not 0 < alpha < 1:
+    if (
+        isinstance(alpha, bool)
+        or not isinstance(alpha, (int, float))
+        or not math.isfinite(float(alpha))
+        or not 0 < alpha < 1
+    ):
         raise ValueError(f"alpha 必須介於 0 與 1 之間,收到 {alpha}")
 
     # n_bootstrap < 1 會導致除以零(p_boot)或空 list 索引(CI 分位數),
     # 且 CLI 的 --bootstrap 直通這裡 —— 必須在入口擋下,給清楚的錯誤訊息。
-    if n_bootstrap < 1:
-        raise ValueError(f"n_bootstrap 必須 >= 1,收到 {n_bootstrap}")
+    if (
+        isinstance(n_bootstrap, bool)
+        or not isinstance(n_bootstrap, int)
+        or n_bootstrap < 1
+    ):
+        raise ValueError(f"n_bootstrap 必須是正整數,收到 {n_bootstrap}")
+
+    pnls = _finite_numeric_sequence(pnls, label="pnls")
 
     n = len(pnls)
     if n == 0:
         return SignificanceResult(0, 0, 0, 0, 1.0, 1.0, 0, 0, False)
 
-    mean = sum(pnls) / n
+    mean = _finite_sum(pnls, label="pnl 總和") / n
+    if not math.isfinite(mean):
+        raise ValueError("pnl 平均值不是有限數字")
     if n < 2:
         # 單筆樣本無法做任何統計推論 — 一律視為不顯著
         return SignificanceResult(n, mean, 0.0, 0.0, 1.0, 1.0, mean, mean, False)
@@ -164,13 +222,15 @@ def test_expectancy_positive(
     if n * n_bootstrap > MAX_BOOTSTRAP_DRAWS:
         n_bootstrap = max(1000, MAX_BOOTSTRAP_DRAWS // n)
 
-    var = sum((p - mean) ** 2 for p in pnls) / (n - 1)
+    var = _finite_sample_variance(pnls, mean, label="pnls")
     std = math.sqrt(var)
 
     # ── t 檢定 ──
     se = std / math.sqrt(n) if std > 0 else 0.0
     if se > 0:
         t_stat = mean / se
+        if not math.isfinite(t_stat):
+            raise ValueError("t 統計量計算溢位")
         p_t = _student_t_sf(t_stat, n - 1)
     else:
         # 標準差為 0:所有交易損益相同。全正則確定獲利,全負則確定虧損
@@ -190,13 +250,20 @@ def test_expectancy_positive(
     # 頻率學派的 p 值不能那樣講。CI 本身維持 percentile 法(語意正確)。
     rng = random.Random(seed)
     shifted = [p - mean for p in pnls]  # 虛無假設:真實期望 = 0
+    if not all(math.isfinite(value) for value in shifted):
+        raise ValueError("置中 bootstrap 計算溢位")
     boot_means: list[float] = []        # 供 CI:重抽均值 = H0 重抽均值 + mean
     n_ge_obs = 0
     for _ in range(n_bootstrap):
-        bm0 = sum(rng.choices(shifted, k=n)) / n   # H0 世界的平均
+        bm0 = _finite_sum(
+            rng.choices(shifted, k=n), label="bootstrap 重抽總和"
+        ) / n   # H0 世界的平均
         if bm0 >= mean:
             n_ge_obs += 1
-        boot_means.append(bm0 + mean)
+        boot_mean = bm0 + mean
+        if not math.isfinite(boot_mean):
+            raise ValueError("bootstrap 平均值計算溢位")
+        boot_means.append(boot_mean)
     boot_means.sort()
     # (n+1)/(B+1) 修正:蒙地卡羅 p 值不該印出「恰好 0」的假精準 ——
     # 觀察值本身也算一次「至少一樣極端」的實現
@@ -269,18 +336,29 @@ def required_sample_size_from_pnls(
     Returns:
         所需樣本數;若平均損益 <= 0(負期望)則回傳 None(再多樣本也沒用)。
     """
-    if not 0 < alpha < 1:
+    if (
+        isinstance(alpha, bool)
+        or not isinstance(alpha, (int, float))
+        or not math.isfinite(float(alpha))
+        or not 0 < alpha < 1
+    ):
         raise ValueError(f"alpha 必須介於 0 與 1 之間,收到 {alpha}")
-    if not 0 < power < 1:
+    if (
+        isinstance(power, bool)
+        or not isinstance(power, (int, float))
+        or not math.isfinite(float(power))
+        or not 0 < power < 1
+    ):
         raise ValueError(f"power 必須介於 0 與 1 之間,收到 {power}")
 
+    pnls = _finite_numeric_sequence(pnls, label="pnls")
     n = len(pnls)
     if n < 2:
         return None
-    mean = sum(pnls) / n
+    mean = _finite_sum(pnls, label="pnl 總和") / n
     if mean <= 0:
         return None
-    var = sum((p - mean) ** 2 for p in pnls) / (n - 1)
+    var = _finite_sample_variance(pnls, mean, label="pnls")
     std = math.sqrt(var)
     if std == 0:
         return 30
@@ -296,6 +374,8 @@ def required_sample_size_from_pnls(
     )
     z = z_alpha + z_power
     need = (z * std / mean) ** 2
+    if not math.isfinite(need):
+        raise ValueError("所需樣本數計算溢位")
     return max(30, int(math.ceil(need)))
 
 
@@ -342,14 +422,25 @@ def welch_mean_test(
     方向未知,不該預設只找「退步」。方向由呼叫端依 diff 的正負描述,
     但顯著與否只做一次對稱的檢定,避免『兩個方向各測一次』變相 p-hacking。
     """
+    if (
+        isinstance(alpha, bool)
+        or not isinstance(alpha, (int, float))
+        or not math.isfinite(float(alpha))
+        or not 0 < alpha < 1
+    ):
+        raise ValueError(f"alpha 必須介於 0 與 1 之間,收到 {alpha}")
+    a = _finite_numeric_sequence(a, label="a")
+    b = _finite_numeric_sequence(b, label="b")
     n1, n2 = len(a), len(b)
     if n1 < 2 or n2 < 2:
         return None
-    m1 = sum(a) / n1
-    m2 = sum(b) / n2
-    v1 = sum((x - m1) ** 2 for x in a) / (n1 - 1)
-    v2 = sum((x - m2) ** 2 for x in b) / (n2 - 1)
+    m1 = _finite_sum(a, label="a 總和") / n1
+    m2 = _finite_sum(b, label="b 總和") / n2
+    v1 = _finite_sample_variance(a, m1, label="a")
+    v2 = _finite_sample_variance(b, m2, label="b")
     se2 = v1 / n1 + v2 / n2
+    if not math.isfinite(se2):
+        raise ValueError("Welch 標準誤計算溢位")
     if se2 <= 0:
         # 兩組內部都零變異:平均相同→不顯著;不同→視為確定不同
         diff = m1 - m2
@@ -362,10 +453,14 @@ def welch_mean_test(
         )
     se = math.sqrt(se2)
     t = (m1 - m2) / se
+    if not math.isfinite(t):
+        raise ValueError("Welch t 統計量計算溢位")
     # Welch–Satterthwaite 自由度
     df = se2 ** 2 / (
         (v1 / n1) ** 2 / (n1 - 1) + (v2 / n2) ** 2 / (n2 - 1)
     )
+    if not math.isfinite(df):
+        raise ValueError("Welch 自由度計算溢位")
     # 雙尾 p:單尾存活函數對稱處理
     p = 2.0 * _student_t_sf(abs(t), df)
     p = min(1.0, max(0.0, p))

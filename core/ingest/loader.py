@@ -97,16 +97,51 @@ def _norm(name: str) -> str:
     return re.sub(r"\s+", "", str(name)).strip().lower()
 
 
-def _build_field_map(columns: Iterable[str]) -> dict[str, str]:
+_FINANCIAL_ALIAS_FIELDS = frozenset({
+    "entry_price",
+    "exit_price",
+    "quantity",
+    "pnl",
+    "pnl_currency",
+})
+
+
+def _build_field_map(
+    columns: Iterable[str],
+    explicit_overrides: Optional[dict[str, str]] = None,
+) -> dict[str, str]:
     """把實際欄位名對應到標準欄位名。回傳 {標準名: 實際欄位名}。"""
     normalized = {_norm(c): c for c in columns}
+    explicit = explicit_overrides or {}
     field_map: dict[str, str] = {}
     for std, synonyms in FIELD_SYNONYMS.items():
-        for syn in synonyms:
-            key = _norm(syn)
-            if key in normalized:
-                field_map[std] = normalized[key]
-                break
+        matches = list(dict.fromkeys(
+            normalized[_norm(syn)]
+            for syn in synonyms
+            if _norm(syn) in normalized
+        ))
+        # fees deliberately stays outside this guard: commission and tax are
+        # separate components and are summed below, while total-fee aliases
+        # have their own existing precedence rules. Other financial fields
+        # cannot safely switch aliases from one row/source to another.
+        if (
+            std in _FINANCIAL_ALIAS_FIELDS
+            and len(matches) > 1
+            and std not in explicit
+        ):
+            shown = "、".join(str(match) for match in matches)
+            detail = (
+                "pnl 可能同時包含 gross/net 或多個淨損益來源，工具不會替你合併"
+                if std == "pnl" else
+                "不同列若改用另一欄，會讓金額或部位被靜默改讀"
+            )
+            raise ValueError(
+                f"自動辨識到財務欄位「{std}」有多個不同別名：{shown}；{detail}。"
+                "請先統一欄名，或用 field_overrides 明確指定，"
+                f"例如 field_overrides={{'{std}': '欄名'}} / --field {std}=欄名。"
+            )
+        if matches:
+            field_map[std] = matches[0]
     return field_map
 
 
@@ -191,20 +226,61 @@ def _naive(dt: datetime) -> datetime:
 def _to_float(value: Any, default: float | None = None) -> float | None:
     if value is None or value == "":
         return default
+    if isinstance(value, bool):
+        return default
     if isinstance(value, (int, float)):
         f = float(value)
         return f if math.isfinite(f) else default
+
     # 幣別只能出現在數字頭尾；不要用全域 replace 把中間髒文字修成數字。
+    # 長碼必須排在短碼前，且英文字碼要有邊界，避免 USDT 被 USD 部分吞掉。
     s = str(value).strip()
-    currency_token = (
-        r"(?:NT\$|US\$|TWD|NTD|USD|JPY|EUR|GBP|CHF|CAD|AUD|NZD|"
-        r"SGD|KRW|CNY|CNH|RMB|HKD|USDT|USDC|BUSD)"
+    code_token = (
+        r"(?:USDT|USDC|BUSD|TWD|NTD|USD|JPY|EUR|GBP|CHF|CAD|AUD|NZD|"
+        r"SGD|KRW|CNY|CNH|RMB|HKD)(?![A-Z])"
     )
-    s = re.sub(rf"(?i)^\s*{currency_token}\s*", "", s, count=1)
-    s = re.sub(rf"(?i)\s*{currency_token}\s*$", "", s, count=1)
-    s = re.sub(r"^[,$￥¥＄]\s*", "", s, count=1)
+    symbol_token = r"(?:NT\$|US\$|\$|￥|¥|＄)"
+
+    def strip_currency(text: str) -> tuple[str, int]:
+        count = 0
+        prefix = re.match(
+            rf"(?i)^\s*(?:{code_token}|{symbol_token})\s*", text
+        )
+        if prefix:
+            text = text[prefix.end():]
+            count += 1
+        suffix = re.search(
+            rf"(?i)\s*(?:(?<![A-Z])(?:USDT|USDC|BUSD|TWD|NTD|USD|JPY|"
+            rf"EUR|GBP|CHF|CAD|AUD|NZD|SGD|KRW|CNY|CNH|RMB|HKD)|"
+            rf"{symbol_token})\s*$",
+            text,
+        )
+        if suffix:
+            text = text[:suffix.start()]
+            count += 1
+        return text.strip(), count
+
+    s, currency_count = strip_currency(s)
+    accounting_negative = False
+    if "(" in s or ")" in s:
+        # 會計負數只接受一組完整包住金額的括號；不修補缺半邊或巢狀括號。
+        if not (s.startswith("(") and s.endswith(")")):
+            return default
+        inner = s[1:-1].strip()
+        if not inner or "(" in inner or ")" in inner:
+            return default
+        accounting_negative = True
+        s, inner_currency_count = strip_currency(inner)
+        currency_count += inner_currency_count
+
+    # 同一金額同時寫兩個幣別符號並不明確；拒絕猜測。
+    if currency_count > 1:
+        return default
     s = re.sub(r"[,，\s]", "", s)
     if s in ("", "-", "—"):
+        return default
+    if accounting_negative and s[:1] in ("+", "-"):
+        # (-100) / USD (-100) 是雙重負號；(+100) 也不是標準會計表示。
         return default
     try:
         f = float(s)
@@ -212,7 +288,9 @@ def _to_float(value: Any, default: float | None = None) -> float | None:
         return default
     # "nan"/"inf" 能被 float() 接受,但會汙染整條統計管線
     # (NaN 的比較恆為 False,inf 讓權益/回撤全爛掉)——視同無法解析。
-    return f if math.isfinite(f) else default
+    if not math.isfinite(f):
+        return default
+    return -f if accounting_negative else f
 
 
 def _normalize_currency(value: Any) -> str | None:
@@ -287,7 +365,7 @@ def _rows_from_csv(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
 
 
 def _rows_from_json(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
     # 支援 [{...}, ...] 或 {"trades": [...]}
     if isinstance(data, dict):
         for key in ("trades", "data", "records", "orders"):
@@ -298,7 +376,17 @@ def _rows_from_json(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
             raise ValueError("JSON 物件中找不到交易陣列(預期鍵: trades/data/records)")
     if not isinstance(data, list) or not data:
         raise ValueError("JSON 必須是非空的交易陣列")
-    columns = list(data[0].keys())
+    columns: list[str] = []
+    seen: set[str] = set()
+    for index, row in enumerate(data, 1):
+        if not isinstance(row, dict):
+            raise ValueError(
+                f"JSON 第 {index} 筆交易必須是物件，收到 {type(row).__name__}"
+            )
+        for key in row:
+            if key not in seen:
+                seen.add(key)
+                columns.append(key)
     return columns, data
 
 
@@ -356,7 +444,7 @@ def load_trades(
     if not rows:
         raise ValueError(f"檔案中沒有任何資料列: {path}")
 
-    field_map = _build_field_map(columns)
+    field_map = _build_field_map(columns, field_overrides)
     if field_overrides:
         field_map.update(field_overrides)
 
@@ -1118,4 +1206,6 @@ def load_trades(
             f"{fee_note}{direct_pnl_note})"
         ),
         account_label=path.stem,
+        rejected_row_count=skipped,
+        rejected_row_reasons=tuple(skip_reasons),
     )

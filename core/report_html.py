@@ -122,6 +122,28 @@ def render_html_report(
     stage = stage_from_analysis(result)
     stage_bg, stage_border, stage_text = _stage_colors(stage.code)
 
+    integrity = result.log.integrity_as_dict()
+    integrity_html = ""
+    if not integrity["complete"]:
+        issue_bits = []
+        if integrity["rejected_row_count"]:
+            issue_bits.append(f"拒絕 {integrity['rejected_row_count']} 列")
+        if integrity["suspected_duplicate_count"]:
+            issue_bits.append(
+                f"疑似精確重複 {integrity['suspected_duplicate_count']} 列"
+            )
+        reasons = "".join(
+            f"<li>{h(reason)}</li>"
+            for reason in integrity["rejected_row_reasons"][:3]
+        )
+        reason_html = f"<ul>{reasons}</ul>" if reasons else ""
+        integrity_html = (
+            "<div class='alert'><b>資料完整性警告：</b>"
+            f"{h('、'.join(issue_bits))}。目前數字只描述保留列，"
+            "不得用來認證優勢或解鎖真錢階段。"
+            f"{reason_html}</div>"
+        )
+
     # 逐策略表(只有描述統計,不發徽章)
     tag_rows = ""
     for tv in (result.tag_verdicts or []):
@@ -307,6 +329,8 @@ color:#6b7280;font-size:12px}}
   <div>{h(v.headline)}</div>
 </div>
 
+{integrity_html}
+
 <div class="stage">
   <b>目前適合的階段</b><br>
   {h(stage.title)}<br>
@@ -372,6 +396,18 @@ def render_share_card(result, *, width: int = 600) -> str:
             f'<div class="guru">聽老師 / 跟單的 {result.follow_guru.n_trades} 筆交易,'
             f"合計 {result.follow_guru.total_pnl:,.0f} {h(currency)}</div>"
         )
+    integrity = result.log.integrity_as_dict()
+    integrity_line = ""
+    if not integrity["complete"]:
+        bits = []
+        if integrity["rejected_row_count"]:
+            bits.append(f"拒絕 {integrity['rejected_row_count']} 列")
+        if integrity["suspected_duplicate_count"]:
+            bits.append(f"疑似精確重複 {integrity['suspected_duplicate_count']} 列")
+        integrity_line = (
+            '<div class="integrity"><b>資料完整性未通過：</b>'
+            f"{h('、'.join(bits))}。本卡僅描述保留列，不可認證優勢。</div>"
+        )
 
     return f"""<!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
@@ -391,11 +427,14 @@ border-bottom:1px solid #1e222d;font-size:14px}}
 .row b{{font-variant-numeric:tabular-nums}}
 .guru{{margin-top:16px;padding:12px 14px;background:#1a1310;
 border:1px solid #7f1d1d;border-radius:8px;font-size:13px;color:#fca5a5}}
+.integrity{{margin:0 0 16px;padding:12px 14px;background:#1a1310;
+border:1px solid #ef4444;border-radius:8px;font-size:13px;color:#fecaca;line-height:1.5}}
 .foot{{margin-top:18px;font-size:11px;color:#6b7280;line-height:1.6}}
 </style></head><body>
 <div class="card">
   <div class="badge">{h(v.level.badge)}</div>
   <div class="head">{h(v.headline)}</div>
+  {integrity_line}
   <div class="stage">目前適合的階段：{h(stage.title)}</div>
   <div class="row"><span>交易筆數</span><b>{m.total_trades}</b></div>
   <div class="row"><span>勝率</span><b>{m.win_rate:.0%}</b></div>
