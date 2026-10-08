@@ -7,6 +7,7 @@
   <meta name="ui-token" content="__UI_TOKEN__">
   <title>反詐投資王｜新手工作台</title>
   <link rel="stylesheet" href="/app.css">
+  <script src="/charts.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -51,7 +52,7 @@
     <main id="workspace" class="workspace" tabindex="-1">
       <header class="topline">
         <div>
-          <p class="eyebrow">LOCAL BEGINNER WORKSPACE · 0.2</p>
+          <p class="eyebrow">LOCAL BEGINNER WORKSPACE · 0.3</p>
           <h1>把紀錄攤開，<br>讓證據自己說話。</h1>
         </div>
         <div class="local-note">
@@ -222,10 +223,10 @@
 
       <section id="section-results" class="panel-section" data-panel="results" hidden>
         <div class="section-kicker">03 · EVIDENCE</div>
-        <div class="section-heading">
+        <div class="section-heading result-heading">
           <div>
             <h2>分析結果</h2>
-            <p>先確認來源與資料完整性，再讀核心引擎給出的原始階段與行動。</p>
+            <p>核心階段不被圖表覆蓋；先看完整性與結論，再讀實際分布、前後段與資金情境。</p>
           </div>
           <div class="live-off"><span>LIVE</span><strong>未提供</strong></div>
         </div>
@@ -239,40 +240,129 @@
         <div id="analysis-content" hidden>
           <div id="origin-banner" class="source-banner"></div>
 
-          <article class="result-block integrity-block">
-            <p class="label">先看資料</p>
-            <div class="result-title-row">
-              <h3>完整性</h3>
-              <span id="integrity-status" class="status-pill"></span>
-            </div>
-            <dl id="integrity-list" class="fact-list"></dl>
-            <ul id="integrity-reasons" class="warning-list"></ul>
-          </article>
+          <div class="result-priority-grid">
+            <article class="result-block integrity-block">
+              <p class="label">先看資料</p>
+              <div class="result-title-row">
+                <h3>完整性</h3>
+                <span id="integrity-status" class="status-pill"></span>
+              </div>
+              <dl id="integrity-list" class="fact-list"></dl>
+              <ul id="integrity-reasons" class="warning-list"></ul>
+            </article>
 
-          <article class="result-block stage-block">
-            <p class="label">核心目前階段</p>
-            <h3 id="stage-title"></h3>
-            <p id="stage-reason" class="stage-reason"></p>
-            <ul id="stage-actions" class="action-list"></ul>
-            <div class="amber-note compact">
-              <strong>這個 GUI 的真實下單仍為「未提供」</strong>
-              <p>分析階段是研究資訊，不是解鎖按鈕。</p>
-            </div>
-          </article>
+            <article class="result-block stage-block">
+              <p class="label">核心目前階段</p>
+              <h3 id="stage-title"></h3>
+              <p id="stage-reason" class="stage-reason"></p>
+              <ul id="stage-actions" class="action-list"></ul>
+              <div class="amber-note compact">
+                <strong>真實下單仍為「未提供」</strong>
+                <p>研究證據不是解鎖按鈕。</p>
+              </div>
+            </article>
+          </div>
 
-          <article class="result-block">
+          <article class="result-block metrics-block">
             <p class="label">MEANINGFUL METRICS</p>
             <h3>關鍵數字</h3>
             <dl id="metrics-list" class="metrics-list"></dl>
             <p class="field-hint">「無法計算」代表資料基準不足，不能當成 0。</p>
           </article>
 
-          <article class="result-block">
-            <p class="label">8 RESEARCH GATES</p>
-            <h3>研究檢查表</h3>
-            <p>這些通過／未通過只描述證據，不會自動允許真錢交易。</p>
+          <section class="visual-evidence" aria-labelledby="visual-evidence-title">
+            <div class="visual-heading">
+              <div><p class="label">ACTUAL TRADE EVIDENCE</p><h3 id="visual-evidence-title">交易證據圖表</h3></div>
+              <p>每筆已實現淨損益；不是市場行情策略回測。</p>
+            </div>
+            <div class="chart-grid">
+              <article class="chart-card">
+                <div class="chart-title"><h4>累積損益與回撤</h4><span id="historical-unit" class="unit-label"></span></div>
+                <div id="historical-chart" class="chart-canvas"></div>
+                <p id="historical-summary" class="chart-summary"></p>
+              </article>
+
+              <article class="chart-card">
+                <div class="chart-title"><h4>單筆損益分布</h4><span id="distribution-unit" class="unit-label"></span></div>
+                <div id="distribution-chart" class="chart-canvas"></div>
+                <div class="table-scroll compact-table" tabindex="0" aria-label="損益分位數資料表，可水平捲動">
+                  <table><thead><tr><th>最小</th><th>P05</th><th>Q1</th><th>中位數</th><th>Q3</th><th>P95</th><th>最大</th><th>平均</th></tr></thead><tbody id="distribution-summary-body"></tbody></table>
+                </div>
+              </article>
+
+              <article class="chart-card">
+                <div class="chart-title"><h4>前段／後段</h4><span class="unit-label">同一刻度</span></div>
+                <div id="holdout-chart" class="chart-canvas"></div>
+                <div id="holdout-cards" class="segment-cards"></div>
+                <p id="holdout-headline" class="chart-summary"></p>
+                <details class="chart-details"><summary>這個切分能說什麼、不能說什麼</summary><ul id="holdout-notes"></ul></details>
+              </article>
+
+              <article class="chart-card readiness-card">
+                <div class="chart-title"><h4>自動化準備事實</h4><span class="unit-label">不評分</span></div>
+                <ul id="automation-readiness" class="automation-list"></ul>
+                <button id="go-paper" class="quiet-button" type="button">建立紙上交易專案</button>
+                <p class="chart-summary">交易紀錄不能重建或認證完整可執行策略規則。</p>
+              </article>
+            </div>
+
+            <details class="visual-warnings"><summary>圖表限制與資料警告</summary><ul id="visual-warning-list" class="warning-list"></ul></details>
+          </section>
+
+          <section class="risk-panel" aria-labelledby="risk-title">
+            <div class="visual-heading">
+              <div><p class="label">SEPARATE CAPITAL SCENARIO</p><h3 id="risk-title">資金警戒線情境</h3></div>
+              <p>必填真實起始資金與已確認結算幣別；預設為「剩餘本金 10%」。</p>
+            </div>
+            <form id="risk-form" class="risk-form" novalidate>
+              <div class="risk-fields">
+                <label>起始資金 <span aria-hidden="true">*</span>
+                  <input id="risk-start-equity" name="start_equity" type="number" min="0" step="any" required inputmode="decimal" autocomplete="off" placeholder="不推估，請自行填入">
+                </label>
+                <label>結算幣別（來自目前紀錄）
+                  <input id="risk-currency" name="currency" readonly aria-readonly="true" value="">
+                </label>
+                <label>門檻意思
+                  <select id="risk-threshold-kind" name="threshold_kind">
+                    <option value="remaining_fraction" selected>剩餘本金比例</option>
+                    <option value="remaining_amount">剩餘固定金額</option>
+                    <option value="loss_fraction">虧損本金比例</option>
+                  </select>
+                </label>
+                <label><span id="risk-threshold-label">剩餘本金（%）</span>
+                  <input id="risk-threshold-value" name="threshold_value" type="number" min="0" max="100" step="any" value="10" required inputmode="decimal">
+                </label>
+                <label>未來交易筆數
+                  <input name="future_trades" type="number" min="1" max="1000" step="1" value="200" required>
+                </label>
+                <label>模擬路徑數
+                  <input name="paths" type="number" min="100" max="5000" step="1" value="1000" required>
+                </label>
+              </div>
+              <p id="risk-availability" class="field-hint"></p>
+              <div class="risk-actions">
+                <button id="run-risk" class="primary-button" type="submit">執行情境</button>
+                <button id="cancel-risk" class="quiet-button" type="button" hidden>取消</button>
+                <progress id="risk-progress" max="100" value="0" hidden aria-label="資金情境進度"></progress>
+                <span id="risk-status" role="status" aria-live="polite"></span>
+              </div>
+            </form>
+
+            <div id="risk-result" class="risk-result" hidden>
+              <dl id="risk-facts" class="metrics-list risk-facts"></dl>
+              <p id="risk-zero-note" class="chart-summary"></p>
+              <div id="risk-chart" class="chart-canvas risk-chart"></div>
+              <div class="table-scroll compact-table" tabindex="0" aria-label="資金情境分位數資料表，可水平捲動">
+                <table><thead><tr><th>期末最小</th><th>P05</th><th>Q1</th><th>中位數</th><th>Q3</th><th>P95</th><th>期末最大</th></tr></thead><tbody id="risk-summary-body"></tbody></table>
+              </div>
+              <details class="chart-details"><summary>情境模型限制</summary><ul id="risk-warning-list"></ul></details>
+            </div>
+          </section>
+
+          <details class="research-gates">
+            <summary>展開研究檢查表（不會自動允許真錢交易）</summary>
             <ul id="readiness-list" class="gate-list"></ul>
-          </article>
+          </details>
 
           <div class="download-bar" aria-label="下載目前分析">
             <div><p class="label">KEEP A COPY</p><strong>主動下載你要保留的資料</strong></div>

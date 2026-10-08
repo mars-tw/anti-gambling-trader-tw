@@ -26,10 +26,17 @@ import core as _core_pkg
 from core.analyzer import analyze_log, sanitize_json
 from core.antiscam.text_scanner import render_scan, scan_text
 from core.ingest.loader import load_trades
+from core.montecarlo import (
+    SimulationCancelled,
+    simulate_capital_risk,
+    threshold_amount,
+)
 from core.onboarding import BEGINNER_COLUMNS, build_beginner_row
 from core.report_html import render_html_report, render_share_card
 from core.scaffold import ScaffoldOptions
 from core.scaffold.generator import generate_project
+from core.ui.chart_report import render_evidence_report, render_share_summary
+from core.ui.visuals import build_visuals
 
 # ---------------------------------------------------------------------------
 # Limits / constants
@@ -49,6 +56,10 @@ _XLSX_MAX_ROWS = _MAX_TRADES + 1  # header + accepted trades
 _XLSX_MAX_COLUMNS = 128
 _XLSX_MAX_CELLS = _XLSX_MAX_ROWS * _XLSX_MAX_COLUMNS
 _XLSX_CELL_REF = re.compile(r"^\$?([A-Za-z]{1,3})\$?([1-9][0-9]{0,6})$")
+_RISK_SEED = 20261008
+_RISK_DEADLINE_SECONDS = 15.0
+_RISK_JOIN_TIMEOUT_SECONDS = 3.0
+_RISK_JOB_ID = re.compile(r"^[0-9a-f]{32}$")
 
 _ALLOWED_EXT = {".csv", ".json", ".xlsx"}
 _SAMPLE_NAMES = {
@@ -391,6 +402,9 @@ class UIService:
         self._analysis: Optional[dict[str, Any]] = None
         self._analysis_result: Any = None  # private AnalysisResult for exports
         self._analysis_revision = 0
+        self._risk_job: Optional[dict[str, Any]] = None
+        self._risk_cancel: Optional[threading.Event] = None
+        self._risk_thread: Optional[threading.Thread] = None
         self._artifacts: dict[str, Artifact] = {}
         self._artifact_bytes = 0
         self._tmpdir = tempfile.TemporaryDirectory(prefix="ui_svc_")
@@ -401,19 +415,35 @@ class UIService:
 
     def close(self) -> None:
         with self._close_lock:
-            if self._closed:
-                return
-            # Wait for this service's one owned operation.  Server shutdown
-            # first stops accepting new requests, so this cannot admit an
-            # unbounded queue of work.
-            self._operation_lock.acquire()
+            with self._state_lock:
+                if self._closed:
+                    return
+                cancel = self._risk_cancel
+                worker = self._risk_thread
+            # Cooperative cancellation is signalled before waiting for either
+            # the worker or the single-operation gate.
+            if cancel is not None:
+                cancel.set()
+            if worker is threading.current_thread():
+                raise RuntimeError("risk worker cannot close its owning service")
+            if worker is not None and worker.is_alive():
+                worker.join(_RISK_JOIN_TIMEOUT_SECONDS)
+                if worker.is_alive():
+                    raise RuntimeError("risk simulation worker did not stop")
+            if not self._operation_lock.acquire(timeout=_RISK_JOIN_TIMEOUT_SECONDS):
+                raise RuntimeError("UI operation did not stop before close deadline")
             try:
                 with self._state_lock:
+                    if self._risk_thread is not None and self._risk_thread.is_alive():
+                        raise RuntimeError("risk simulation worker is still active")
                     self._closed = True
                     self._manual_rows.clear()
                     self._manual_revision = 0
                     self._analysis = None
                     self._analysis_result = None
+                    self._risk_job = None
+                    self._risk_cancel = None
+                    self._risk_thread = None
                     self._artifacts.clear()
                     self._artifact_bytes = 0
                     self._busy = False
@@ -444,6 +474,9 @@ class UIService:
                     "manual_rows": list(self._manual_rows),
                     "manual_revision": self._manual_revision,
                     "analysis": self._analysis,
+                    "risk_simulation": self._public_risk_job_locked(
+                        include_result=False
+                    ),
                     "busy": self._busy,
                 }
             )
@@ -477,8 +510,14 @@ class UIService:
             self._invalidate_analysis_locked()
 
     def _invalidate_analysis_locked(self) -> None:
+        if self._risk_cancel is not None:
+            self._risk_cancel.set()
         self._analysis = None
         self._analysis_result = None
+        self._risk_job = None
+        self._risk_cancel = None
+        if self._risk_thread is not None and not self._risk_thread.is_alive():
+            self._risk_thread = None
 
     # -- samples / upload --------------------------------------------------
 
@@ -1044,19 +1083,34 @@ class UIService:
     def _store_analysis(self, result: Any, *, origin: str) -> dict[str, Any]:
         with self._state_lock:
             self._analysis_revision += 1
+            analysis_id = _new_id()
+            revision = self._analysis_revision
+            visuals = build_visuals(result)
+            visuals["provenance"] = {
+                "analysis_id": analysis_id,
+                "revision": revision,
+                "origin": origin,
+                "demo": origin == "demo",
+                "source": str(getattr(result.log, "source", "") or ""),
+            }
             payload = {
-                "id": _new_id(),
-                "revision": self._analysis_revision,
+                "id": analysis_id,
+                "revision": revision,
                 "origin": origin,
                 "result": result.as_dict(),
                 "metrics": result.metrics.as_dict(),
                 "text_report": result.text_report,
                 "readiness": _readiness(result),
+                "visuals": visuals,
                 "can_live": False,
             }
             payload = _finite(payload)
             self._analysis = payload
             self._analysis_result = result
+            self._risk_job = None
+            self._risk_cancel = None
+            if self._risk_thread is not None and not self._risk_thread.is_alive():
+                self._risk_thread = None
         return payload
 
     def _require_analysis(self, analysis_id: Optional[str]) -> Any:
@@ -1090,6 +1144,338 @@ class UIService:
             "revision": revision,
         }
 
+    # -- asynchronous capital-risk scenario -------------------------------
+
+    def _public_risk_job_locked(self, *, include_result: bool) -> dict[str, Any] | None:
+        job = self._risk_job
+        if job is None:
+            return None
+        public = {
+            "job_id": job["job_id"],
+            "analysis_id": job["analysis_id"],
+            "revision": job["revision"],
+            "status": job["status"],
+            "progress": dict(job["progress"]),
+            "cancel_requested": bool(job.get("cancel_requested")),
+        }
+        if job.get("error"):
+            public["error"] = str(job["error"])
+        if include_result and job.get("status") == "completed":
+            public["result"] = job.get("result")
+        return public
+
+    @staticmethod
+    def _risk_number(value: Any, label: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise UIError(f"{label} 必須是有限數字", status=400)
+        try:
+            number = float(value)
+        except (OverflowError, ValueError) as exc:
+            raise UIError(f"{label} 超出可計算範圍", status=400) from exc
+        if not math.isfinite(number):
+            raise UIError(f"{label} 必須是有限數字", status=400)
+        return number
+
+    @staticmethod
+    def _risk_int(value: Any, label: str, minimum: int, maximum: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise UIError(f"{label} 必須是整數", status=400)
+        if not minimum <= value <= maximum:
+            raise UIError(f"{label} 必須介於 {minimum} 與 {maximum}", status=400)
+        return value
+
+    def start_risk_simulation(
+        self,
+        *,
+        analysis_id: Any,
+        revision: Any,
+        start_equity: Any,
+        currency: Any,
+        threshold_kind: Any,
+        threshold_value: Any,
+        future_trades: Any,
+        paths: Any,
+    ) -> dict[str, Any]:
+        """Validate, bind, and dispatch one non-daemon owned worker."""
+
+        if not self._operation_lock.acquire(blocking=False):
+            raise UIError("服務忙碌中，請稍後再試", status=409)
+        release_gate = True
+        try:
+            with self._state_lock:
+                if self._closed:
+                    raise UIError("本次使用已結束", status=409)
+                if not isinstance(analysis_id, str) or not analysis_id:
+                    raise UIError("analysis_id 必須是目前分析識別碼", status=400)
+                if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+                    raise UIError("revision 必須是正整數", status=400)
+                result = self._require_analysis(analysis_id)
+                analysis = self._analysis
+                assert analysis is not None
+                if revision != analysis.get("revision"):
+                    raise UIError("analysis revision 已過期或不相符", status=409)
+                equity = self._risk_number(start_equity, "start_equity")
+                if equity <= 0.0:
+                    raise UIError("start_equity 必須大於 0", status=400)
+                if not isinstance(currency, str):
+                    raise UIError("currency 必須是目前分析的結算幣別", status=400)
+                requested_currency = currency.strip().upper()
+                if not re.fullmatch(r"[A-Z0-9]{2,12}", requested_currency):
+                    raise UIError("currency 格式不正確", status=400)
+                if not isinstance(threshold_kind, str):
+                    raise UIError("threshold_kind 必須是文字", status=400)
+                threshold_value_number = self._risk_number(
+                    threshold_value, "threshold_value"
+                )
+                try:
+                    threshold_amount(
+                        equity, threshold_kind.strip(), threshold_value_number
+                    )
+                except ValueError as exc:
+                    raise UIError(str(exc), status=400) from exc
+                horizon = self._risk_int(future_trades, "future_trades", 1, 1000)
+                path_count = self._risk_int(paths, "paths", 100, 5000)
+                if horizon * path_count > 1_000_000:
+                    raise UIError(
+                        "future_trades × paths 不可超過 1,000,000", status=400
+                    )
+
+                integrity = result.log.integrity_as_dict()
+                if not integrity.get("complete"):
+                    raise UIError(
+                        "交易紀錄完整性未通過，不提供推論式資金情境", status=422
+                    )
+                metrics = result.metrics
+                actual_currency = str(metrics.pnl_currency or "").strip().upper()
+                if not metrics.currency_reliable or not actual_currency:
+                    raise UIError(
+                        metrics.currency_note or "損益幣別未可靠確認，無法執行資金情境",
+                        status=422,
+                    )
+                if requested_currency != actual_currency:
+                    raise UIError(
+                        "currency 必須和目前分析的帳戶結算幣別完全相同", status=400
+                    )
+                pnl_values: list[float] = []
+                for trade in result.log:
+                    pnl_values.append(self._risk_number(trade.pnl, "trade pnl"))
+                if len(pnl_values) < 10:
+                    raise UIError("至少需要 10 筆完整的已平倉損益", status=422)
+                if len(pnl_values) > _MAX_TRADES:
+                    raise UIError(f"交易筆數超過 {_MAX_TRADES} 上限", status=413)
+
+                job_id = _new_id()
+                cancel = threading.Event()
+                job = {
+                    "job_id": job_id,
+                    "analysis_id": analysis_id,
+                    "revision": revision,
+                    "status": "running",
+                    "progress": {"completed_paths": 0, "paths": path_count},
+                    "cancel_requested": False,
+                    "result": None,
+                    "error": None,
+                }
+                self._risk_job = job
+                self._risk_cancel = cancel
+                self._busy = True
+                provenance = {
+                    "analysis_id": analysis_id,
+                    "revision": revision,
+                    "origin": analysis.get("origin"),
+                    "demo": analysis.get("origin") == "demo",
+                    "source": str(getattr(result.log, "source", "") or ""),
+                }
+                worker = threading.Thread(
+                    target=self._run_risk_worker,
+                    kwargs={
+                        "job_id": job_id,
+                        "pnls": tuple(pnl_values),
+                        "start_equity": equity,
+                        "currency": actual_currency,
+                        "threshold_kind": threshold_kind.strip(),
+                        "threshold_value": threshold_value_number,
+                        "future_trades": horizon,
+                        "paths": path_count,
+                        "cancel": cancel,
+                        "provenance": provenance,
+                    },
+                    name=f"ui-risk-{job_id[:8]}",
+                    daemon=False,
+                )
+                self._risk_thread = worker
+            try:
+                worker.start()
+            except BaseException:
+                with self._state_lock:
+                    if self._risk_job is job:
+                        self._risk_job = None
+                        self._risk_cancel = None
+                        self._risk_thread = None
+                        self._busy = False
+                raise
+            release_gate = False
+            with self._state_lock:
+                public = self._public_risk_job_locked(include_result=False)
+                assert public is not None
+                return public
+        except UIError:
+            raise
+        except Exception as exc:
+            raise UIError(f"無法啟動資金情境：{exc}", status=500) from exc
+        finally:
+            if release_gate:
+                self._operation_lock.release()
+
+    def _run_risk_worker(
+        self,
+        *,
+        job_id: str,
+        pnls: tuple[float, ...],
+        start_equity: float,
+        currency: str,
+        threshold_kind: str,
+        threshold_value: float,
+        future_trades: int,
+        paths: int,
+        cancel: threading.Event,
+        provenance: dict[str, Any],
+    ) -> None:
+        def progress(completed: int, total: int) -> None:
+            with self._state_lock:
+                if self._risk_job is not None and self._risk_job.get("job_id") == job_id:
+                    self._risk_job["progress"] = {
+                        "completed_paths": int(completed),
+                        "paths": int(total),
+                    }
+
+        try:
+            scenario = simulate_capital_risk(
+                pnls,
+                start_equity=start_equity,
+                currency=currency,
+                threshold_kind=threshold_kind,
+                threshold_value=threshold_value,
+                future_trades=future_trades,
+                paths=paths,
+                seed=_RISK_SEED,
+                cancel_event=cancel,
+                progress_callback=progress,
+                deadline_seconds=_RISK_DEADLINE_SECONDS,
+            )
+            scenario["simulation_id"] = job_id
+            scenario["analysis_id"] = provenance["analysis_id"]
+            scenario["revision"] = provenance["revision"]
+            scenario["provenance"] = dict(provenance)
+            with self._state_lock:
+                job = self._risk_job
+                analysis = self._analysis
+                if job is None or job.get("job_id") != job_id:
+                    return
+                if (
+                    analysis is None
+                    or analysis.get("id") != provenance["analysis_id"]
+                    or analysis.get("revision") != provenance["revision"]
+                ):
+                    job["status"] = "failed"
+                    job["error"] = "分析版本已變更，情境結果未採用"
+                    job["result"] = None
+                elif cancel.is_set():
+                    job["status"] = "cancelled"
+                    job["result"] = None
+                else:
+                    job["status"] = "completed"
+                    job["progress"] = {
+                        "completed_paths": paths,
+                        "paths": paths,
+                    }
+                    job["result"] = _finite(scenario)
+        except SimulationCancelled:
+            with self._state_lock:
+                if self._risk_job is not None and self._risk_job.get("job_id") == job_id:
+                    self._risk_job["status"] = "cancelled"
+                    self._risk_job["result"] = None
+        except TimeoutError:
+            with self._state_lock:
+                if self._risk_job is not None and self._risk_job.get("job_id") == job_id:
+                    self._risk_job["status"] = "failed"
+                    self._risk_job["error"] = "資金情境超過 15 秒安全計算時間"
+                    self._risk_job["result"] = None
+        except Exception:
+            with self._state_lock:
+                if self._risk_job is not None and self._risk_job.get("job_id") == job_id:
+                    self._risk_job["status"] = "failed"
+                    self._risk_job["error"] = "資金情境計算失敗；輸入未被改寫"
+                    self._risk_job["result"] = None
+        finally:
+            with self._state_lock:
+                if self._risk_job is not None and self._risk_job.get("job_id") == job_id:
+                    self._busy = False
+                # Release while still holding the state lock. A caller that
+                # observes a terminal status can acquire the operation gate,
+                # then waits until this fully committed state is visible.
+                self._operation_lock.release()
+
+    def risk_simulation_status(self, job_id: Any) -> dict[str, Any]:
+        if not isinstance(job_id, str) or not _RISK_JOB_ID.fullmatch(job_id):
+            raise UIError("找不到指定資金情境", status=404)
+        with self._state_lock:
+            job = self._risk_job
+            if job is None or job.get("job_id") != job_id:
+                raise UIError("找不到指定資金情境", status=404)
+            analysis = self._analysis
+            if (
+                analysis is None
+                or analysis.get("id") != job.get("analysis_id")
+                or analysis.get("revision") != job.get("revision")
+            ):
+                raise UIError("資金情境所屬分析已過期", status=409)
+            public = self._public_risk_job_locked(include_result=True)
+            assert public is not None
+            return _finite(public)
+
+    def cancel_risk_simulation(self, job_id: Any) -> dict[str, Any]:
+        if not isinstance(job_id, str) or not _RISK_JOB_ID.fullmatch(job_id):
+            raise UIError("找不到指定資金情境", status=404)
+        with self._state_lock:
+            job = self._risk_job
+            if job is None or job.get("job_id") != job_id:
+                raise UIError("找不到指定資金情境", status=404)
+            analysis = self._analysis
+            if (
+                analysis is None
+                or analysis.get("id") != job.get("analysis_id")
+                or analysis.get("revision") != job.get("revision")
+            ):
+                raise UIError("資金情境所屬分析已過期", status=409)
+            if job.get("status") == "running" and self._risk_cancel is not None:
+                job["cancel_requested"] = True
+                self._risk_cancel.set()
+            public = self._public_risk_job_locked(include_result=True)
+            assert public is not None
+            return _finite(public)
+
+    def _require_simulation_locked(self, simulation_id: str | None) -> dict[str, Any] | None:
+        if simulation_id is None:
+            return None
+        if not isinstance(simulation_id, str) or not _RISK_JOB_ID.fullmatch(simulation_id):
+            raise UIError("simulation_id 格式不正確", status=400)
+        job = self._risk_job
+        if job is None or job.get("job_id") != simulation_id:
+            raise UIError("simulation_id 已過期或不存在", status=404)
+        analysis = self._analysis
+        if (
+            analysis is None
+            or analysis.get("id") != job.get("analysis_id")
+            or analysis.get("revision") != job.get("revision")
+        ):
+            raise UIError("simulation_id 所屬分析已過期", status=409)
+        if job.get("status") != "completed" or job.get("result") is None:
+            raise UIError("資金情境尚未完成，不能匯出", status=409)
+        public = self._public_risk_job_locked(include_result=True)
+        assert public is not None
+        return public
+
 
     def _add_export_source_banner(
         self, document: str, *, origin: str, marker: str
@@ -1111,7 +1497,12 @@ class UIService:
 
     # -- export / artifacts ------------------------------------------------
 
-    def export(self, kind: str, analysis_id: str | None = None) -> Artifact:
+    def export(
+        self,
+        kind: str,
+        analysis_id: str | None = None,
+        simulation_id: str | None = None,
+    ) -> Artifact:
         with self._operation():
             try:
                 if not isinstance(kind, str):
@@ -1121,9 +1512,15 @@ class UIService:
                     with self._state_lock:
                         result = self._require_analysis(analysis_id)
                         provenance = self._export_provenance_locked()
+                        assert self._analysis is not None
+                        visuals = self._analysis.get("visuals") or {}
+                        simulation = self._require_simulation_locked(simulation_id)
                     if k == "json":
                         payload = _finite(result.as_dict())
                         payload["ui_provenance"] = provenance
+                        payload["visuals"] = _finite(visuals)
+                        if simulation is not None:
+                            payload["risk_simulation"] = _finite(simulation)
                         body = json.dumps(
                             payload,
                             ensure_ascii=False,
@@ -1134,6 +1531,14 @@ class UIService:
                         )
                     if k == "html":
                         html = render_html_report(result)
+                        marker = '<div class="disclaimer">'
+                        if marker not in html:
+                            raise UIError("HTML 匯出格式無法加入證據圖表", status=500)
+                        html = html.replace(
+                            marker,
+                            render_evidence_report(visuals, simulation) + "\n" + marker,
+                            1,
+                        )
                         html = self._add_export_source_banner(
                             html,
                             origin=provenance["origin"],
@@ -1142,8 +1547,17 @@ class UIService:
                         return self._put_artifact(
                             "report.html", "text/html; charset=utf-8", html.encode("utf-8")
                         )
+                    card_document = render_share_card(result)
+                    card_marker = '<div class="foot">'
+                    if card_marker not in card_document:
+                        raise UIError("分享卡格式無法加入分位摘要", status=500)
+                    card_document = card_document.replace(
+                        card_marker,
+                        render_share_summary(visuals, simulation) + "\n" + card_marker,
+                        1,
+                    )
                     card = self._add_export_source_banner(
-                        render_share_card(result),
+                        card_document,
                         origin=provenance["origin"],
                         marker='<div class="card">',
                     )

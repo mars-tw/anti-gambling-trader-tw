@@ -77,6 +77,31 @@ def test_state_capabilities(svc: UIService):
     assert st["busy"] is False
 
 
+def _explicit_currency_analysis(svc: UIService, count: int = 12) -> dict:
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=list(service_module.BEGINNER_COLUMNS))
+    writer.writeheader()
+    for index in range(count):
+        writer.writerow(
+            {
+                "代號": f"OWN{index}",
+                "方向": "買",
+                "進場時間": f"2025-01-{index + 1:02d} 09:00:00",
+                "出場時間": f"2025-01-{index + 1:02d} 10:00:00",
+                "進場價": "100",
+                "出場價": "100",
+                "數量": "1",
+                "手續費": "0",
+                "損益": "5" if index % 3 else "-4",
+                "損益幣別": "USD",
+                "策略": "bounded-test",
+            }
+        )
+    return svc.analyze_upload(
+        "explicit-currency.csv", ("\ufeff" + buf.getvalue()).encode("utf-8")
+    )
+
+
 def test_analyze_builtin_tw_sample(svc: UIService):
     out = svc.analyze_sample("tw")
     assert out["origin"] == "demo"
@@ -144,10 +169,19 @@ def _assert_export_provenance(
         "analysis_id": analysis["id"],
         "revision": analysis["revision"],
     }
-    without_provenance = {
-        key: value for key, value in payload.items() if key != "ui_provenance"
+    core_payload = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"ui_provenance", "visuals", "risk_simulation"}
     }
-    assert without_provenance == analysis["result"]
+    assert core_payload == analysis["result"]
+    assert payload["visuals"]["provenance"] == {
+        "analysis_id": analysis["id"],
+        "revision": analysis["revision"],
+        "origin": analysis["origin"],
+        "demo": demo,
+        "source": analysis["result"]["source"],
+    }
 
     html = svc.export("html", analysis_id=analysis["id"]).content.decode("utf-8")
     card = svc.export("card", analysis_id=analysis["id"]).content.decode("utf-8")
@@ -880,3 +914,129 @@ def test_uierror_default_status():
     err = UIError("訊息")
     assert err.status == 400
     assert str(err) == "訊息"
+
+
+def _wait_risk_terminal(svc: UIService, job_id: str, timeout: float = 3.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        job = svc.risk_simulation_status(job_id)
+        if job["status"] != "running":
+            return job
+        time.sleep(0.01)
+    raise AssertionError("risk simulation did not reach a terminal state")
+
+
+def test_async_risk_single_batch_and_explicit_export_binding(svc: UIService):
+    analysis = _explicit_currency_analysis(svc)
+    assert analysis["visuals"]["risk_simulation_available"] is True
+    job = svc.start_risk_simulation(
+        analysis_id=analysis["id"],
+        revision=analysis["revision"],
+        start_equity=1000.0,
+        currency="USD",
+        threshold_kind="remaining_fraction",
+        threshold_value=0.10,
+        future_trades=10,
+        paths=100,
+    )
+    # A small batch may finish before the starter returns; the public contract
+    # is a running or already-completed job followed by the same poll path.
+    assert job["status"] in {"running", "completed"}
+    complete = _wait_risk_terminal(svc, job["job_id"])
+    assert complete["status"] == "completed"
+    assert complete["result"]["analysis_id"] == analysis["id"]
+    assert complete["result"]["revision"] == analysis["revision"]
+
+    without = json.loads(
+        svc.export("json", analysis_id=analysis["id"]).content.decode("utf-8")
+    )
+    assert "risk_simulation" not in without
+    with_risk = json.loads(
+        svc.export(
+            "json",
+            analysis_id=analysis["id"],
+            simulation_id=job["job_id"],
+        ).content.decode("utf-8")
+    )
+    assert with_risk["risk_simulation"]["job_id"] == job["job_id"]
+    html = svc.export(
+        "html",
+        analysis_id=analysis["id"],
+        simulation_id=job["job_id"],
+    ).content.decode("utf-8")
+    assert "資金警戒線情境" in html
+    assert "<svg" in html
+    assert analysis["id"] in html
+
+
+def test_risk_worker_owns_busy_gate_cancel_and_shutdown(monkeypatch):
+    service = UIService(mode="browser")
+    started = threading.Event()
+
+    def delayed(*args, cancel_event, progress_callback, paths, **kwargs):
+        progress_callback(0, paths)
+        started.set()
+        while not cancel_event.wait(0.01):
+            pass
+        raise service_module.SimulationCancelled("cancelled")
+
+    monkeypatch.setattr(service_module, "simulate_capital_risk", delayed)
+    analysis = _explicit_currency_analysis(service)
+    job = service.start_risk_simulation(
+        analysis_id=analysis["id"],
+        revision=analysis["revision"],
+        start_equity=1000.0,
+        currency="USD",
+        threshold_kind="remaining_amount",
+        threshold_value=100.0,
+        future_trades=1000,
+        paths=100,
+    )
+    assert started.wait(1)
+    assert service.state()["busy"] is True
+    with pytest.raises(UIError) as busy:
+        service.scan("hello")
+    assert busy.value.status == 409
+    service.cancel_risk_simulation(job["job_id"])
+    assert _wait_risk_terminal(service, job["job_id"])["status"] == "cancelled"
+    worker = service._risk_thread
+    service.close()
+    assert worker is not None and not worker.is_alive()
+    assert not any(
+        thread.is_alive() and thread.name.startswith("ui-risk-")
+        for thread in threading.enumerate()
+    )
+
+
+def test_new_data_invalidates_completed_simulation_and_stale_export(svc: UIService):
+    analysis = _explicit_currency_analysis(svc)
+    job = svc.start_risk_simulation(
+        analysis_id=analysis["id"],
+        revision=analysis["revision"],
+        start_equity=1000.0,
+        currency="USD",
+        threshold_kind="loss_fraction",
+        threshold_value=0.5,
+        future_trades=2,
+        paths=100,
+    )
+    assert _wait_risk_terminal(svc, job["job_id"])["status"] == "completed"
+    svc.add_record(
+        {
+            "symbol": "NEW",
+            "pnl": "1",
+            "side": "unknown",
+            "exit_time": "2026-01-01",
+            "currency": "USD",
+        }
+    )
+    with pytest.raises(UIError) as stale_job:
+        svc.risk_simulation_status(job["job_id"])
+    assert stale_job.value.status == 404
+    with pytest.raises(UIError) as stale_export:
+        svc.export(
+            "json",
+            analysis_id=analysis["id"],
+            simulation_id=job["job_id"],
+        )
+    assert stale_export.value.status in {404, 409}

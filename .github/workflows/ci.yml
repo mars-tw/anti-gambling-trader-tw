@@ -51,6 +51,7 @@ jobs:
           required_ui = {
               "core/ui/static/index.html",
               "core/ui/static/app.css",
+              "core/ui/static/charts.js",
               "core/ui/static/app.js",
           }
           missing_ui = required_ui - names

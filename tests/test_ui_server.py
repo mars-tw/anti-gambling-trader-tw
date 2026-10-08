@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import csv
 import http.client
 import io
 import json
@@ -12,6 +13,8 @@ import zipfile
 
 import pytest
 
+import core.ui.server as server_module
+import core.ui.service as service_module
 from core.ui.server import UIServer, start_server
 
 
@@ -59,6 +62,28 @@ def _post(server: UIServer, path: str, payload: dict):
     return _request(server, "POST", path, payload, token=server.token)
 
 
+def _explicit_currency_csv(count: int = 12) -> bytes:
+    columns = [
+        "代號", "方向", "進場時間", "出場時間", "進場價", "出場價",
+        "數量", "手續費", "損益", "損益幣別", "策略",
+    ]
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=columns)
+    writer.writeheader()
+    for index in range(count):
+        writer.writerow(
+            {
+                "代號": f"HTTP{index}", "方向": "買",
+                "進場時間": f"2025-02-{index + 1:02d} 09:00:00",
+                "出場時間": f"2025-02-{index + 1:02d} 10:00:00",
+                "進場價": "100", "出場價": "100", "數量": "1",
+                "手續費": "0", "損益": "3" if index % 2 else "-2",
+                "損益幣別": "USD", "策略": "http-test",
+            }
+        )
+    return ("\ufeff" + output.getvalue()).encode("utf-8")
+
+
 def test_static_health_headers_and_no_secret_in_health(ui_server: UIServer):
     status, headers, body = _request(ui_server, "GET", "/")
     assert status == 200
@@ -80,7 +105,11 @@ def test_static_health_headers_and_no_secret_in_health(ui_server: UIServer):
     }
     assert ui_server.token not in body.decode("utf-8")
 
-    for asset, media in (("/app.css", "text/css"), ("/app.js", "text/javascript")):
+    for asset, media in (
+        ("/app.css", "text/css"),
+        ("/charts.js", "text/javascript"),
+        ("/app.js", "text/javascript"),
+    ):
         status, headers, body = _request(ui_server, "GET", asset)
         assert status == 200 and body
         assert headers["Content-Type"].startswith(media)
@@ -175,6 +204,93 @@ def test_analyze_export_download_and_stale_id(ui_server: UIServer):
     assert status == 409
 
 
+def test_valid_analysis_can_outlive_input_deadline(ui_server: UIServer, monkeypatch):
+    real_analyze_log = service_module.analyze_log
+
+    def delayed_analyze_log(*args, **kwargs):
+        time.sleep(1.2)
+        return real_analyze_log(*args, **kwargs)
+
+    monkeypatch.setattr(service_module, "analyze_log", delayed_analyze_log)
+    raw = _explicit_currency_csv()
+    status, _, body = _post(
+        ui_server,
+        "/api/analyze",
+        {
+            "filename": "delayed.csv",
+            "content_base64": base64.b64encode(raw).decode("ascii"),
+        },
+    )
+    assert status == 200
+    assert _json(body)["id"]
+
+
+def test_owned_deadline_generation_prevents_stale_expiry(monkeypatch, ui_server: UIServer):
+    timers = []
+
+    class FakeTimer:
+        def __init__(self, _interval, function, args=(), kwargs=None):
+            self.function = function
+            self.args = args
+            self.kwargs = kwargs or {}
+            self.cancelled = False
+            self.started = False
+            timers.append(self)
+
+        def cancel(self):
+            self.cancelled = True
+
+        def start(self):
+            self.started = True
+
+        def fire(self):
+            self.function(*self.args, **self.kwargs)
+
+    class FakeRequest:
+        def __init__(self):
+            self.shutdown_calls = 0
+            self.close_calls = 0
+
+        def shutdown(self, _how):
+            self.shutdown_calls += 1
+
+        def close(self):
+            self.close_calls += 1
+
+    monkeypatch.setattr(server_module.threading, "Timer", FakeTimer)
+    httpd = ui_server._httpd
+    request = FakeRequest()
+    key = id(request)
+    with httpd._owned_lock:
+        httpd._owned_connections[key] = request
+        input_timer = httpd._schedule_owned_deadline_locked(
+            key,
+            server_module._REQUEST_DEADLINE_SECONDS,
+        )
+
+    httpd._mark_request_input_complete(request)
+    assert input_timer.cancelled
+    assert len(timers) == 2
+    compute_timer = timers[1]
+    assert compute_timer.started
+
+    # Simulate a callback that was already entering when cancel() ran.
+    input_timer.fire()
+    assert request.close_calls == 0
+    assert key in httpd._owned_connections
+
+    compute_timer.fire()
+    assert request.close_calls == 1
+    assert key not in httpd._owned_connections
+    assert key not in httpd._owned_request_deadlines
+
+    httpd._mark_request_input_complete(request)
+    assert request.close_calls == 1
+    assert len(timers) == 2
+    assert key not in httpd._owned_connections
+    assert key not in httpd._owned_request_deadlines
+
+
 def test_manual_revision_removal_and_artifact_csv(ui_server: UIServer):
     for symbol in ("AAPL", "MSFT"):
         status, _, body = _post(
@@ -234,6 +350,94 @@ def test_scaffold_is_download_only_and_paper(ui_server: UIServer):
         )
     assert "broker" in config.lower() or "paper" in config.lower()
     assert "allow_live_trading: true" not in config.lower()
+
+
+def test_async_risk_routes_and_explicit_export_id(ui_server: UIServer):
+    raw = _explicit_currency_csv()
+    status, _, body = _post(
+        ui_server,
+        "/api/analyze",
+        {
+            "filename": "risk.csv",
+            "content_base64": base64.b64encode(raw).decode("ascii"),
+        },
+    )
+    assert status == 200
+    analysis = _json(body)
+    assert analysis["visuals"]["risk_simulation_available"] is True
+
+    status, _, body = _post(
+        ui_server,
+        "/api/risk-simulation",
+        {
+            "analysis_id": analysis["id"],
+            "revision": analysis["revision"],
+            "start_equity": 1000,
+            "currency": "USD",
+            "threshold_kind": "remaining_fraction",
+            "threshold_value": 0.1,
+            "future_trades": 10,
+            "paths": 100,
+        },
+    )
+    assert status == 202
+    job = _json(body)
+    job_id = job["job_id"]
+
+    status, _, _ = _request(
+        ui_server, "GET", f"/api/risk-simulation/{job_id}"
+    )
+    assert status == 403
+    deadline = time.monotonic() + 5
+    while True:
+        status, _, body = _request(
+            ui_server,
+            "GET",
+            f"/api/risk-simulation/{job_id}",
+            token=ui_server.token,
+        )
+        assert status == 200
+        current = _json(body)
+        if current["status"] != "running":
+            break
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    assert current["status"] == "completed"
+
+    status, _, body = _post(
+        ui_server,
+        "/api/export",
+        {
+            "kind": "json",
+            "analysis_id": analysis["id"],
+            "simulation_id": job_id,
+        },
+    )
+    assert status == 200
+    artifact = _json(body)
+    status, _, raw_json = _request(
+        ui_server, "GET", artifact["download_url"], token=ui_server.token
+    )
+    assert status == 200
+    exported = _json(raw_json)
+    assert exported["risk_simulation"]["job_id"] == job_id
+
+    status, _, _ = _post(
+        ui_server,
+        "/api/risk-simulation",
+        {
+            "analysis_id": analysis["id"],
+            "revision": analysis["revision"],
+            "start_equity": 1000,
+            "currency": "USD",
+            "threshold_kind": "remaining_fraction",
+            "threshold_value": 0.1,
+            "future_trades": 10,
+            "paths": 100,
+            "seed": 1,
+        },
+    )
+    assert status == 400
 
 
 def test_strict_json_duplicate_keys_and_content_type(ui_server: UIServer):

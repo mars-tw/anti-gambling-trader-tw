@@ -22,18 +22,26 @@
 
 from .simulate import (
     RuinScenario,
+    SimulationCancelled,
     format_fraction,
     gambler_ruin_probability,
     losing_streak_probability,
     render_scenario,
+    simulate_capital_risk,
+    simulate_capital_risk_scenario,
     simulate_ruin_scenario,
+    threshold_amount,
 )
 
 __all__ = [
     "RuinScenario",
+    "SimulationCancelled",
     "format_fraction",
     "gambler_ruin_probability",
     "losing_streak_probability",
+    "simulate_capital_risk",
+    "simulate_capital_risk_scenario",
     "simulate_ruin_scenario",
+    "threshold_amount",
     "render_scenario",
 ]
