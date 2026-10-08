@@ -15,10 +15,29 @@ description: "反詐投資王完整使用流程：怎麼選入口、記錄交易
 > `fit-check` 評估的是「目前這份完整交易紀錄支持哪個階段」，不是人格測驗、
 > 財力審查或未來獲利保證。工具永遠不會認證你適合重押、借錢或全職交易。
 
+0.2.0 的新手預設入口是本機圖形工作台：
+
+```bash
+anti-gambling-trader ui                 # 選瀏覽器或桌面視窗
+anti-gambling-trader ui --mode browser  # 零額外執行期依賴
+anti-gambling-trader ui --mode desktop  # 先 pip install -e ".[desktop,excel]"；Windows 需 WebView2
+```
+
+自動化啟動可加 `--port 0 --no-open --ready-file ui-ready.json`。`--port 0` 由系統挑選
+可用埠；ready file 只在健康檢查（桌面版則是實際視窗 loaded 事件）後，以不覆寫既有檔案
+的方式建立，內容不含工作階段 nonce。
+
+兩種外殼載入完全相同的本機 HTTP UI。原始匯入檔不會被修改；分析可能使用本機暫存檔。
+正常完成或正常結束會清理這些暫存，但非預期失敗或強制停止可能讓系統暫存檔留在本機。
+要保留的紀錄與報告請主動下載；下載檔是明確建立的持久副本。下載目前紀錄 CSV 後，重新
+啟動工作台可在「載入先前逐筆紀錄」重新載入，繼續之前的紀錄。關閉瀏覽器分頁不會自動
+停止服務，請使用畫面內的「結束本次使用」或 `Ctrl+C`。它不收券商憑證，也不實作真實下單。
+
 ## 1. 先選你手上的素材
 
 | 你現在有什麼 | 先執行 | 會得到什麼 |
 |---|---|---|
+| 想用圖形流程 | `anti-gambling-trader ui` | 選瀏覽器／桌面，依五步完成示範、紀錄、分析、下載與紙上鷹架 |
 | 不知道從哪開始 | `anti-gambling-trader start` | 依素材顯示最短路徑 |
 | 一筆剛平倉的交易 | `anti-gambling-trader record` | 五個短問題，安全附加到 CSV |
 | 完整、連續交易紀錄 | `anti-gambling-trader fit-check my_trades.csv` | 停手／紙上模擬／極小額驗證分流 |
@@ -178,6 +197,11 @@ anti-gambling-trader scan-screenshot --text "手機複製出的圖片文字"
 問題，它不會替個別技術頒發「具優勢」認證。
 
 ## 9. 交易程式與真錢安全閘
+
+圖形工作台產生的 ZIP 與一般 CLI 進階腳架要分清楚：GUI 只產生固定
+`broker=paper`、`stage=None`、live flags 為 false 的學習鷹架，而且**不會執行它**。
+它沒有金鑰欄、券商連線或 live unlock；分析結果即使到
+`tiny_live_validation` 也不改變這條邊界。
 
 `scaffold` 產出的專案預設使用 `PaperBroker`。即使使用真實券商範本，也必須同時滿足：
 

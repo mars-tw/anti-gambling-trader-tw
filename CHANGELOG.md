@@ -6,6 +6,23 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-08
+
+### Added
+- 新增同一套本機 HTTP UI 的瀏覽器與原生桌面兩種模式，包含原生模式選擇器、
+  `anti-gambling-trader ui`、`python -m core.ui`、Windows `start-ui.cmd` 與選配 pywebview。
+- 新手五步流程：明確標示的示範、檔案匯入／本次手動紀錄、資料完整性與核心階段、
+  受保護的 JSON／HTML／分享卡／CSV 下載，以及固定 PaperBroker 的 ZIP 鷹架。
+- loopback-only HTTP 防護：精確 Host／Origin、工作階段 nonce、嚴格 JSON 與請求大小、
+  CSP／no-store、固定路由、受保護下載、隔離的多執行個體與可驗證 ready file。
+- Windows onedir／ZIP 建置腳本，保留 UI 靜態資源、範例與腳架生成所需實體 broker 原始碼。
+
+### Fixed
+- 分析前先以 `load_trades` 執行 2,000 筆上限，避免超量資料進入昂貴統計流程；
+  新分析即使在副檔名、空檔或大小預檢失敗，也會使舊分析失效。
+- 統計／變更工作改用非阻塞單工作閘，`state()` 在分析期間仍可讀，併發工作直接回 409。
+- 紙上鷹架使用有效的 `lightweight` 圖表預設；新增帶 revision 的單筆手動紀錄移除流程。
+
 ### Changed
 - 首頁首屏與中英文功能總覽補上自動化交易程式能力，並明示 PaperBroker 預設、
   真實券商自行接線、即時行情 runner 與需沿用的四層安全檢查，避免誤解為一鍵實盤

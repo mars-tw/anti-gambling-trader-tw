@@ -1,5 +1,49 @@
 # 反詐投資王（Anti-Gambling Trader）
 
+## 新手先用圖形工作台（安裝後約 5 分鐘）
+
+0.2.0 新增同一套本機介面的兩種開法，由你選擇：
+
+- **本機瀏覽器版**：只用 Python 標準函式庫，畫面開在預設瀏覽器。
+- **桌面視窗版**：同一個網址、同一套服務，包在原生桌面 WebView 視窗中。
+
+從原始碼安裝瀏覽器版：
+
+```bash
+pip install -e .
+anti-gambling-trader ui                 # 跳出「瀏覽器／桌面」選擇器
+anti-gambling-trader ui --mode browser  # 直接開本機瀏覽器版
+```
+
+Windows 也可雙擊 `start-ui.cmd`。它會優先使用專案的 `.venv`，不會自行安裝套件。
+桌面視窗與 Excel 支援需另外安裝；Windows 還需要 Microsoft Edge WebView2 Runtime：
+
+```bash
+pip install -e ".[desktop,excel]"
+anti-gambling-trader ui --mode desktop
+```
+
+若桌面元件不可用，請改用 `--mode browser`。兩種模式都只監聽
+`127.0.0.1`，匯入流程是「試樣本 → 匯入或手動記錄 → 看完整性與核心階段 →
+下載報告 → 產生紙上專案」。內建樣本永遠標示為示範，不是你的績效。
+
+手動紀錄與分析可能使用本機暫存檔；原始檔不會被修改。正常完成或正常結束時會清理這些
+暫存，但非預期失敗或強制停止可能讓系統暫存檔留在本機。要保留的 CSV／報告請主動下載；
+下載檔是你明確建立的持久副本。下載目前紀錄 CSV 後，重新啟動工作台可在「載入先前逐筆紀錄」
+重新載入，繼續之前的紀錄。瀏覽器只關分頁不會停止本機服務；請按畫面上的「結束本次使用」，
+或回終端機按 `Ctrl+C`。
+
+自動驗收可使用 `--no-open --ready-file ui-ready.json`；ready JSON 只含本機網址、
+PID、模式、執行個體 ID 與就緒狀態，**不含工作階段 nonce**，而且既有檔案不會被覆蓋。
+維護者若要在 Windows 從已安裝的 desktop 相依套件建立 onedir 與 ZIP，可執行
+`python scripts/build_windows_ui.py --output dist`。這只是建置指令；本頁不宣稱或連結
+尚未經可攜驗證的發行執行檔。
+
+> **真實下單未提供。** 這個 GUI 不收券商金鑰、不連券商、不送單。即使核心階段為
+> `tiny_live_validation`，畫面仍維持「實盤未提供」。下載的交易專案固定為
+> `PaperBroker`、`stage=None`、live flags 關閉，只是待你填策略的學習鷹架。
+> GitHub Pages 文件站只是使用說明，不是雲端分析服務，也不會在網頁上接收交易資料。
+
 **你在懷疑「投資群組是不是詐騙」「老師帶單可不可信」「我的交易到底是實力還是運氣」嗎？**
 這是一個免費開源的交易統計、投資反詐與自動化交易開發工具：把交易紀錄
 （台股／美股／加密貨幣）丟進來，
@@ -126,7 +170,7 @@ cd anti-gambling-trader-tw
 pip install -e .            # 安裝本體（之後可用 anti-gambling-trader 指令）
 
 # 以下為可選依賴：
-# pip install openpyxl       # 只有要讀 Excel (.xlsx) 才需要
+# pip install -e ".[excel]" # 只有要讀 Excel (.xlsx) 才需要（含安全 XML 解析）
 # pip install -e ".[screenshot]"  # 圖片 OCR；另需安裝 Tesseract 與繁中字庫
 # pip install backtrader     # 只有要實際跑回測骨架才需要（或 vectorbt）
 ```
