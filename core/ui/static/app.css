@@ -27,6 +27,7 @@ html {
   background: var(--paper);
   color: var(--ink);
   font-family: var(--sans);
+  overflow-x: clip;
   scroll-behavior: smooth;
 }
 
@@ -34,6 +35,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  overflow-x: clip;
   background:
     radial-gradient(circle at 83% 8%, rgba(20, 125, 120, 0.08), transparent 29rem),
     linear-gradient(90deg, rgba(23, 36, 55, 0.028) 1px, transparent 1px),
@@ -229,6 +231,7 @@ summary:focus-visible,
 
 .workspace {
   width: min(100%, 76rem);
+  min-width: 0;
   padding: 3.2rem clamp(1.5rem, 4.5vw, 5rem) 2.5rem;
 }
 
@@ -860,6 +863,17 @@ td .remove-button {
   font-size: 1.15rem;
 }
 
+.metrics-list .metric-highlight {
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--teal);
+  background: var(--teal-pale);
+}
+
+.metrics-list .metric-highlight dd {
+  color: var(--teal-dark);
+  font-size: clamp(1.25rem, 2.4vw, 1.6rem);
+}
+
 .gate-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1036,6 +1050,345 @@ td .remove-button {
   background: #6e2d28;
 }
 
+/* Results keep the core conclusion above the fold; the generic marketing hero
+   collapses only while this panel is active. */
+.workspace.results-mode {
+  padding-top: 1.4rem;
+}
+
+.workspace.results-mode .topline {
+  min-height: 0;
+  justify-content: flex-end;
+  padding-bottom: 0.7rem;
+}
+
+.workspace.results-mode .topline > div:first-child {
+  display: none;
+}
+
+.workspace.results-mode .local-note {
+  max-width: 30rem;
+  padding-top: 0;
+}
+
+#section-results {
+  padding-top: 1.35rem;
+}
+
+#section-results .result-heading {
+  margin: 0.9rem 0 1rem;
+}
+
+#section-results .result-heading h2 {
+  font-size: clamp(1.8rem, 3vw, 2.7rem);
+}
+
+.result-priority-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.result-priority-grid .result-block {
+  padding: 1rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 253, 248, 0.58);
+}
+
+.result-priority-grid .fact-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.result-priority-grid .warning-list,
+.result-priority-grid .action-list {
+  margin-top: 0.65rem;
+}
+
+.metrics-block {
+  padding-bottom: 0.9rem;
+}
+
+.visual-evidence,
+.risk-panel {
+  margin-top: 1.25rem;
+  padding-top: 1.1rem;
+  border-top: 2px solid var(--ink);
+}
+
+.visual-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.visual-heading h3 {
+  margin: 0.28rem 0 0;
+  font-family: var(--serif);
+  font-size: clamp(1.45rem, 2.8vw, 2rem);
+}
+
+.visual-heading > p {
+  max-width: 28rem;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.chart-card {
+  min-width: 0;
+  overflow: hidden;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  background: var(--paper-light);
+  box-shadow: 0 10px 28px rgba(31, 39, 43, 0.045);
+}
+
+.chart-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.chart-title h4 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 1.15rem;
+}
+
+.unit-label {
+  color: var(--ink-soft);
+  font-size: 0.67rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.chart-canvas {
+  width: 100%;
+  min-height: 0;
+  margin-top: 0.75rem;
+  overflow: hidden;
+}
+
+.chart-canvas svg {
+  display: block;
+  width: 100%;
+  height: var(--chart-height, 270px);
+  max-width: 100%;
+  overflow: visible;
+}
+
+.chart-unavailable {
+  display: grid;
+  min-height: 5rem;
+  margin: 0;
+  place-items: center;
+  padding: 1rem;
+  border: 1px dashed var(--line-dark);
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+.chart-summary {
+  margin: 0.65rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+.compact-table {
+  margin-top: 0.55rem;
+  border: 0;
+}
+
+.compact-table table {
+  min-width: 36rem;
+  font-size: 0.69rem;
+}
+
+.compact-table th,
+.compact-table td {
+  padding: 0.45rem 0.5rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.segment-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin-top: 0.65rem;
+}
+
+.segment-card {
+  padding: 0.65rem;
+  border: 1px solid var(--line);
+  background: var(--white);
+}
+
+.segment-card h5 {
+  margin: 0;
+  font-family: var(--serif);
+}
+
+.segment-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.48rem;
+  margin: 0.55rem 0 0;
+}
+
+.segment-card dt {
+  color: var(--ink-soft);
+  font-size: 0.64rem;
+}
+
+.segment-card dd {
+  margin: 0.15rem 0 0;
+  overflow-wrap: anywhere;
+  font-size: 0.77rem;
+  font-weight: 700;
+}
+
+.chart-details,
+.visual-warnings,
+.research-gates {
+  margin-top: 0.7rem;
+  color: var(--ink-soft);
+  font-size: 0.77rem;
+  line-height: 1.55;
+}
+
+.chart-details ul,
+.visual-warnings ul {
+  padding-left: 1.1rem;
+}
+
+.visual-warnings {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.automation-list {
+  margin: 0.8rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.automation-list li {
+  display: grid;
+  grid-template-columns: 0.75rem minmax(0, 1fr);
+  gap: 0.6rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.automation-list li::before {
+  width: 0.58rem;
+  height: 0.58rem;
+  margin-top: 0.28rem;
+  border-radius: 50%;
+  background: var(--amber);
+  content: "";
+}
+
+.automation-list li[data-status="available"]::before {
+  background: var(--teal);
+}
+
+.automation-list strong,
+.automation-list small {
+  display: block;
+}
+
+.automation-list small {
+  margin-top: 0.18rem;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+
+.risk-panel {
+  border-top-color: var(--teal-dark);
+}
+
+.risk-form {
+  padding: 1rem;
+  border: 1px solid var(--line);
+  background: var(--paper-light);
+}
+
+.risk-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.risk-fields label {
+  min-width: 0;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.risk-fields input,
+.risk-fields select {
+  width: 100%;
+  margin-top: 0.32rem;
+}
+
+.risk-fields input[readonly] {
+  background: var(--paper-deep);
+  color: var(--ink-soft);
+}
+
+.risk-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-top: 0.85rem;
+}
+
+.risk-actions progress {
+  width: min(16rem, 100%);
+  accent-color: var(--teal);
+}
+
+.risk-actions span {
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+}
+
+.risk-result {
+  margin-top: 0.9rem;
+  padding: 1rem;
+  border: 1px solid var(--teal);
+  background: rgba(219, 234, 229, 0.38);
+}
+
+.risk-chart {
+  min-height: 0;
+}
+
+.risk-facts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.research-gates {
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
 @media (max-width: 980px) {
   .shell {
     display: block;
@@ -1108,6 +1461,14 @@ td .remove-button {
 
   .flow-list li:nth-child(3) {
     border-left: 0;
+  }
+
+  .result-priority-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .risk-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -1191,8 +1552,32 @@ td .remove-button {
   .field-grid,
   .fact-list,
   .metrics-list,
-  .gate-list {
+  .gate-list,
+  .chart-grid,
+  .risk-fields,
+  .risk-facts {
     grid-template-columns: 1fr;
+  }
+
+  .visual-heading {
+    display: block;
+  }
+
+  .visual-heading > p {
+    margin-top: 0.5rem;
+    text-align: left;
+  }
+
+  .chart-card {
+    padding: 0.75rem;
+  }
+
+  .segment-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace.results-mode .local-note {
+    margin-top: 0;
   }
 
   .flow-list li,

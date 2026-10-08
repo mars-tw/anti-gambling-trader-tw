@@ -17,8 +17,8 @@ description: "Windows 可攜版三步驟即可開啟本機圖形工作台；也�
 
 不想先安裝 Python？Windows 10/11 x64 可以直接使用可攜版：
 
-1. 從 [v0.2.0 發行頁](https://github.com/mars-tw/anti-gambling-trader-tw/releases/tag/v0.2.0)
-   下載 [AntiGamblingTrader-windows-x64.zip](https://github.com/mars-tw/anti-gambling-trader-tw/releases/download/v0.2.0/AntiGamblingTrader-windows-x64.zip)。
+1. 從 [v0.3.0 發行頁](https://github.com/mars-tw/anti-gambling-trader-tw/releases/tag/v0.3.0)
+   下載 [AntiGamblingTrader-windows-x64.zip](https://github.com/mars-tw/anti-gambling-trader-tw/releases/download/v0.3.0/AntiGamblingTrader-windows-x64.zip)。
 2. 解壓縮**整個資料夾**，不要只把裡面的 exe 單獨拖出來。
 3. 雙擊 `AntiGamblingTrader.exe`，再選擇本機瀏覽器版或獨立應用程式視窗。
 
@@ -47,7 +47,8 @@ anti-gambling-trader ui
   Microsoft Edge WebView2 Runtime。若開不起來，改用瀏覽器版即可。
 
 Windows 原始碼使用者也可雙擊專案根目錄的 `start-ui.cmd`。它不會偷偷安裝套件。
-畫面依序帶你「試樣本 → 匯入或手動記錄 → 看完整性與階段 → 下載報告 → 紙上專案」。
+畫面依序帶你「試樣本 → 匯入或手動記錄 → 看完整性、階段與圖表 → 視需要跑資金情境
+→ 下載報告 → 紙上專案」。
 樣本一定標示為示範，不是你的成績。
 
 > 工作台只連本機 `127.0.0.1`。原始匯入檔不會被修改；分析可能使用本機暫存檔。正常完成
@@ -58,6 +59,20 @@ Windows 原始碼使用者也可雙擊專案根目錄的 `start-ui.cmd`。它不
 >
 > GUI **不提供實盤**：沒有券商金鑰欄、沒有解鎖、沒有真單。紙上專案 ZIP 固定使用
 > PaperBroker，只是待你填策略的鷹架。
+
+### 看懂 0.3.0 的四組證據
+
+匯入完成後，「分析結果」會先保留原本的完整性、核心階段與關鍵數字，接著顯示：
+
+1. 依真實平倉時間排列的累積已實現淨損益與回撤金額；缺時間或同時點順序不明就不畫。
+2. 每筆淨損益的直方圖、零線、最小／P05／Q1／中位數／Q3／P95／最大值與平均。
+3. 核心實際使用的前段／後段單一 holdout；兩張卡使用相同尺度，但它不是行情回測。
+4. 另行啟動的資金警戒線情境。起始資金預設空白，請填真實金額並確認幣別；「10」預設
+   表示剩餘本金 10%，也可明確切換為剩餘固定金額 10，或虧損本金 10%。
+
+資金情境用過去每筆固定幣別淨損益有放回重抽，不複利、不改部位、不執行上傳的 Python，
+也不是未來獲利或券商強平預測。跌破門檻後停止並保留實際穿越金額；0/N 只代表本次有限
+路徑未出現，不代表風險為零。修改任何情境欄位後，舊結果會立刻停止顯示與匯出。
 
 ---
 

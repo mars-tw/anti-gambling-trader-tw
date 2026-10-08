@@ -29,7 +29,8 @@ from core.ui.service import Artifact, UIError, UIService
 _BIND_HOST = "127.0.0.1"
 _MAX_HTTP_BODY = 3 * 1024 * 1024
 _READ_TIMEOUT_SECONDS = 0.25
-_REQUEST_DEADLINE_SECONDS = 1.0
+_REQUEST_DEADLINE_SECONDS = 1.0  # header/body input deadline
+_COMPUTE_DEADLINE_SECONDS = 15.0
 _HANDLER_JOIN_TIMEOUT_SECONDS = 2.0
 _MAX_ACTIVE_HANDLERS = 16
 _ARTIFACT_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -42,6 +43,8 @@ _POST_ROUTES = frozenset(
         "/api/remove-record",
         "/api/analyze-records",
         "/api/scan",
+        "/api/risk-simulation",
+        "/api/cancel-risk-simulation",
         "/api/export",
         "/api/scaffold",
         "/api/shutdown",
@@ -138,6 +141,8 @@ class _OwnedHTTPServer(ThreadingHTTPServer):
         self._owned_closing = False
         self._owned_connections: dict[int, Any] = {}
         self._owned_handler_threads: dict[int, threading.Thread] = {}
+        self._owned_request_deadlines: dict[int, tuple[int, threading.Timer]] = {}
+        self._owned_deadline_generation = 0
 
     @staticmethod
     def _close_owned_socket(request: Any) -> None:
@@ -181,30 +186,73 @@ class _OwnedHTTPServer(ThreadingHTTPServer):
             self._close_owned_socket(request)
             raise
 
-    def _expire_owned_connection(self, key: int) -> None:
+    def _schedule_owned_deadline_locked(
+        self,
+        key: int,
+        seconds: float,
+    ) -> threading.Timer:
+        """Create and start a uniquely identified deadline while holding the lock."""
+
+        self._owned_deadline_generation += 1
+        generation = self._owned_deadline_generation
+        deadline = threading.Timer(
+            seconds,
+            self._expire_owned_connection,
+            args=(key, generation),
+        )
+        deadline.daemon = True
+        self._owned_request_deadlines[key] = (generation, deadline)
+        deadline.start()
+        return deadline
+
+    def _expire_owned_connection(self, key: int, generation: int) -> None:
         """Enforce an absolute deadline even when a peer drips bytes forever."""
 
         with self._owned_lock:
-            request = self._owned_connections.get(key)
-        if request is not None:
-            self._close_owned_socket(request)
+            deadline = self._owned_request_deadlines.get(key)
+            if deadline is None or deadline[0] != generation:
+                return
+            self._owned_request_deadlines.pop(key, None)
+            request = self._owned_connections.pop(key, None)
+            if request is not None:
+                self._close_owned_socket(request)
+
+    def _mark_request_input_complete(self, request: Any) -> None:
+        """Switch one validated request from input protection to compute protection."""
+
+        key = id(request)
+        with self._owned_lock:
+            deadline = self._owned_request_deadlines.pop(key, None)
+            input_deadline = deadline[1] if deadline is not None else None
+            if key in self._owned_connections and not self._owned_closing:
+                self._schedule_owned_deadline_locked(
+                    key,
+                    _COMPUTE_DEADLINE_SECONDS,
+                )
+            if input_deadline is not None:
+                input_deadline.cancel()
 
     def _process_owned_request_thread(self, request: Any, client_address: Any, key: int) -> None:
-        # The timer only tears down this request socket.  It never writes user
-        # data and complements the per-read timeout configured by the handler.
-        deadline = threading.Timer(
-            _REQUEST_DEADLINE_SECONDS,
-            self._expire_owned_connection,
-            args=(key,),
-        )
-        deadline.daemon = True
-        deadline.start()
+        # The input timer only tears down this request socket. It never writes
+        # user data and complements the per-read timeout configured by the
+        # handler. Once the request schema is validated, the handler switches
+        # to the longer bounded compute timer above.
+        with self._owned_lock:
+            if key in self._owned_connections and not self._owned_closing:
+                self._schedule_owned_deadline_locked(
+                    key,
+                    _REQUEST_DEADLINE_SECONDS,
+                )
         try:
             self.finish_request(request, client_address)
         except Exception:
             self.handle_error(request, client_address)
         finally:
-            deadline.cancel()
+            with self._owned_lock:
+                deadline = self._owned_request_deadlines.pop(key, None)
+                request_deadline = deadline[1] if deadline is not None else None
+            if request_deadline is not None:
+                request_deadline.cancel()
             try:
                 self.shutdown_request(request)
             except (AttributeError, OSError, ValueError):
@@ -220,6 +268,10 @@ class _OwnedHTTPServer(ThreadingHTTPServer):
         with self._owned_lock:
             self._owned_closing = True
             requests = list(self._owned_connections.values())
+            deadlines = [deadline[1] for deadline in self._owned_request_deadlines.values()]
+            self._owned_request_deadlines.clear()
+            for deadline in deadlines:
+                deadline.cancel()
         for request in requests:
             self._close_owned_socket(request)
 
@@ -368,6 +420,11 @@ class _Handler(BaseHTTPRequestHandler):
         if len(values) != 1 or values[0] != self.app.url:
             raise UIError("Origin 不符合本機工作階段", status=403)
 
+    def _mark_input_complete(self) -> None:
+        marker = getattr(self.server, "_mark_request_input_complete", None)
+        if marker is not None:
+            marker(self.request)
+
     def _read_json(self) -> dict[str, Any]:
         if self.headers.get_all("Transfer-Encoding"):
             raise UIError("不接受 Transfer-Encoding", status=400)
@@ -419,6 +476,7 @@ class _Handler(BaseHTTPRequestHandler):
         mapping = {
             "/": ("index.html", "text/html; charset=utf-8"),
             "/app.css": ("app.css", "text/css; charset=utf-8"),
+            "/charts.js": ("charts.js", "text/javascript; charset=utf-8"),
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
         }
         item = mapping.get(path)
@@ -443,9 +501,12 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             self._require_host()
             path = self._validate_target()
+            if path in {"/", "/app.css", "/charts.js", "/app.js"}:
+                self._mark_input_complete()
             if self._serve_static(path):
                 return
             if path == "/api/health":
+                self._mark_input_complete()
                 self._send_json(
                     200,
                     {
@@ -458,7 +519,19 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/state":
                 self._require_token()
+                self._mark_input_complete()
                 self._send_json(200, self.app.service.state())
+                return
+            risk_prefix = "/api/risk-simulation/"
+            if path.startswith(risk_prefix):
+                self._require_token()
+                job_id = path[len(risk_prefix) :]
+                if not _ARTIFACT_ID.fullmatch(job_id):
+                    raise UIError("找不到指定資金情境", status=404)
+                self._mark_input_complete()
+                self._send_json(
+                    200, self.app.service.risk_simulation_status(job_id)
+                )
                 return
             prefix = "/api/artifact/"
             if path.startswith(prefix):
@@ -466,6 +539,7 @@ class _Handler(BaseHTTPRequestHandler):
                 artifact_id = path[len(prefix) :]
                 if not _ARTIFACT_ID.fullmatch(artifact_id):
                     raise UIError("產物 ID 格式不正確", status=404)
+                self._mark_input_complete()
                 artifact = self.app.service.artifact(artifact_id)
                 fallback = _ascii_download_name(artifact.filename)
                 encoded = quote(artifact.filename, safe="")
@@ -499,7 +573,11 @@ class _Handler(BaseHTTPRequestHandler):
 
             if path == "/api/analyze":
                 if set(payload) == {"sample"}:
-                    result = self.app.service.analyze_sample(payload["sample"])
+                    sample = payload["sample"]
+                    if not isinstance(sample, str):
+                        raise UIError("sample must be a string", status=400)
+                    self._mark_input_complete()
+                    result = self.app.service.analyze_sample(sample)
                 elif set(payload) == {"filename", "content_base64"}:
                     filename = payload["filename"]
                     encoded = payload["content_base64"]
@@ -509,6 +587,7 @@ class _Handler(BaseHTTPRequestHandler):
                         content = base64.b64decode(encoded, validate=True)
                     except (binascii.Error, ValueError) as exc:
                         raise UIError("content_base64 不是嚴格 Base64", status=400) from exc
+                    self._mark_input_complete()
                     result = self.app.service.analyze_upload(filename, content)
                 else:
                     raise UIError(
@@ -528,6 +607,7 @@ class _Handler(BaseHTTPRequestHandler):
                     content = base64.b64decode(encoded, validate=True)
                 except (binascii.Error, ValueError) as exc:
                     raise UIError("content_base64 不是嚴格 Base64", status=400) from exc
+                self._mark_input_complete()
                 self._send_json(200, self.app.service.import_records(filename, content))
                 return
 
@@ -535,12 +615,14 @@ class _Handler(BaseHTTPRequestHandler):
                 unknown = sorted(set(payload) - _RECORD_FIELDS)
                 if unknown:
                     raise UIError(f"不接受未知欄位：{', '.join(unknown)}", status=400)
+                self._mark_input_complete()
                 state = self.app.service.add_record(payload)
                 self._send_json(200, state)
                 return
 
             if path == "/api/remove-record":
                 self._exact_fields(payload, required={"index", "revision"})
+                self._mark_input_complete()
                 state = self.app.service.remove_record(
                     payload["index"], payload["revision"]
                 )
@@ -549,22 +631,62 @@ class _Handler(BaseHTTPRequestHandler):
 
             if path == "/api/analyze-records":
                 self._exact_fields(payload, required=set())
+                self._mark_input_complete()
                 self._send_json(200, self.app.service.analyze_records())
                 return
 
             if path == "/api/scan":
                 self._exact_fields(payload, required={"text"})
+                self._mark_input_complete()
                 self._send_json(200, self.app.service.scan(payload["text"]))
+                return
+
+            if path == "/api/risk-simulation":
+                self._exact_fields(
+                    payload,
+                    required={
+                        "analysis_id",
+                        "revision",
+                        "start_equity",
+                        "currency",
+                        "threshold_kind",
+                        "threshold_value",
+                        "future_trades",
+                        "paths",
+                    },
+                )
+                self._mark_input_complete()
+                job = self.app.service.start_risk_simulation(
+                    analysis_id=payload["analysis_id"],
+                    revision=payload["revision"],
+                    start_equity=payload["start_equity"],
+                    currency=payload["currency"],
+                    threshold_kind=payload["threshold_kind"],
+                    threshold_value=payload["threshold_value"],
+                    future_trades=payload["future_trades"],
+                    paths=payload["paths"],
+                )
+                self._send_json(202, job)
+                return
+
+            if path == "/api/cancel-risk-simulation":
+                self._exact_fields(payload, required={"job_id"})
+                self._mark_input_complete()
+                job = self.app.service.cancel_risk_simulation(payload["job_id"])
+                self._send_json(202 if job.get("status") == "running" else 200, job)
                 return
 
             if path == "/api/export":
                 self._exact_fields(
                     payload,
                     required={"kind"},
-                    optional={"analysis_id"},
+                    optional={"analysis_id", "simulation_id"},
                 )
+                self._mark_input_complete()
                 artifact = self.app.service.export(
-                    payload["kind"], payload.get("analysis_id")
+                    payload["kind"],
+                    payload.get("analysis_id"),
+                    payload.get("simulation_id"),
                 )
                 self._send_json(200, _artifact_payload(artifact))
                 return
@@ -575,6 +697,7 @@ class _Handler(BaseHTTPRequestHandler):
                     required={"project_name", "symbols"},
                     optional={"market"},
                 )
+                self._mark_input_complete()
                 artifact = self.app.service.scaffold(
                     payload["project_name"],
                     payload["symbols"],
@@ -585,6 +708,7 @@ class _Handler(BaseHTTPRequestHandler):
 
             if path == "/api/shutdown":
                 self._exact_fields(payload, required=set())
+                self._mark_input_complete()
                 self._send_json(200, {"ok": True, "message": "本次使用已結束"})
                 threading.Thread(
                     target=self.app.shutdown,
@@ -593,7 +717,7 @@ class _Handler(BaseHTTPRequestHandler):
                 ).start()
                 return
 
-            if path in {"/", "/app.css", "/app.js", "/api/health", "/api/state"} or path.startswith("/api/artifact/"):
+            if path in {"/", "/app.css", "/charts.js", "/app.js", "/api/health", "/api/state"} or path.startswith("/api/artifact/") or path.startswith("/api/risk-simulation/"):
                 self._error(405, "此路徑不支援 POST")
             else:
                 self._error(404, "找不到指定路徑")

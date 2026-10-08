@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "anti-gambling-trader"
-version = "0.2.0"
+version = "0.3.0"
 description = "交易統計、投資反詐與自動化交易程式腳架 — 支援台股/美股/加密貨幣"
 readme = "README.md"
 requires-python = ">=3.10"

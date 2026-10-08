@@ -11,9 +11,34 @@
     paper_until_risk_data: "補齊風險資料後再評估",
     tiny_live_validation: "極小額驗證",
   });
+  const AUTOMATION_STATUS_LABELS = Object.freeze({
+    available: "有資料可檢視",
+    paper_scaffold: "可建立",
+    unverified: "尚未驗證",
+    not_provided: "未提供",
+  });
+  const AUTOMATION_KEY_LABELS = Object.freeze({
+    data: "資料",
+    data_available: "資料可用性",
+    paper: "紙上交易專案",
+    paper_broker: "紙上交易專案",
+    live: "真實下單",
+    live_trading: "真實下單",
+    broker: "券商連線",
+    credentials: "券商憑證",
+    rules: "策略規則",
+  });
 
   let currentState = null;
   let currentAnalysisId = null;
+  let currentAnalysisRevision = null;
+  let currentSimulationId = null;
+  let currentRiskJobId = null;
+  let currentRiskJobStatus = null;
+  let riskFormRevision = 0;
+  let riskPollTimer = null;
+  let riskPollInFlight = false;
+  let riskPollNonce = 0;
   let localResultInvalidated = false;
   let actionRunning = false;
   let sessionClosed = false;
@@ -26,6 +51,28 @@
 
   function setText(node, value) {
     if (node) node.textContent = value == null ? "" : String(value);
+  }
+
+  function uiCopy(value, fallback = "") {
+    const text = value == null ? "" : String(value);
+    const cleaned = text
+      .replace(/\bNone\b/g, "未提供")
+      .replace(/\bnull\b/gi, "未提供")
+      .replace(/\bR7\b/g, "分位數")
+      .replace(/\bschema\b/gi, "資料格式")
+      .replace(/\bholdout\b/gi, "前後段")
+      .trim();
+    return cleaned || fallback;
+  }
+
+  function automationStatus(status, key) {
+    if (String(key || "").toLowerCase() === "paper_scaffold") return "可建立";
+    return AUTOMATION_STATUS_LABELS[status] || uiCopy(status, "未提供");
+  }
+
+  function automationLabel(item) {
+    const key = String(item && item.key || "").toLowerCase();
+    return uiCopy(item && item.label, AUTOMATION_KEY_LABELS[key] || "自動化項目");
   }
 
   function clearNode(node) {
@@ -54,6 +101,15 @@
   function clearSensitiveWorkspace() {
     currentState = null;
     currentAnalysisId = null;
+    currentAnalysisRevision = null;
+    currentSimulationId = null;
+    currentRiskJobId = null;
+    currentRiskJobStatus = null;
+    riskFormRevision += 1;
+    riskPollNonce += 1;
+    if (riskPollTimer !== null) window.clearTimeout(riskPollTimer);
+    riskPollTimer = null;
+    riskPollInFlight = false;
     localResultInvalidated = true;
     pendingConfirmation = null;
     confirmationReturnFocus = null;
@@ -149,19 +205,32 @@
 
   function actionButtons() {
     return document.querySelectorAll(
-      "form button, .sample-button, .analysis-download, #download-template, #download-records, #analyze-records"
+      "form button, .sample-button, .analysis-download, #download-template, #download-records, #analyze-records, #go-paper"
     );
   }
 
   function updateControls() {
     const hasRows = Boolean(currentState && currentState.manual_rows.length);
     const hasAnalysis = Boolean(currentAnalysisId && !localResultInvalidated);
+    const riskRunning = currentRiskJobStatus === "running" || currentRiskJobStatus === "cancel_requested";
     actionButtons().forEach((button) => {
-      let disabled = actionRunning || sessionClosed;
+      let disabled = actionRunning || sessionClosed || riskRunning;
       if (button.id === "analyze-records") disabled = disabled || !hasRows;
       if (button.classList.contains("analysis-download")) disabled = disabled || !hasAnalysis;
+      if (button.id === "run-risk") {
+        const available = Boolean(
+          currentState && currentState.analysis && currentState.analysis.visuals &&
+          currentState.analysis.visuals.risk_simulation_available
+        );
+        disabled = actionRunning || sessionClosed || riskRunning || !hasAnalysis || !available;
+      }
       button.disabled = disabled;
     });
+    const cancel = byId("cancel-risk");
+    if (cancel) {
+      cancel.hidden = !riskRunning;
+      cancel.disabled = sessionClosed || currentRiskJobStatus === "cancel_requested";
+    }
   }
 
   async function api(path, options = {}) {
@@ -222,6 +291,7 @@
   }
 
   function selectSection(name, focus = false) {
+    byId("workspace").classList.toggle("results-mode", name === "results");
     document.querySelectorAll("[data-panel]").forEach((section) => {
       section.hidden = section.dataset.panel !== name;
     });
@@ -237,7 +307,9 @@
   }
 
   function invalidateLocalResult(reason) {
+    invalidateRiskResult("分析已變更；舊資金情境不再適用。", true);
     currentAnalysisId = null;
+    currentAnalysisRevision = null;
     localResultInvalidated = true;
     byId("analysis-content").hidden = true;
     byId("no-analysis").hidden = false;
@@ -246,8 +318,9 @@
     updateControls();
   }
 
-  function appendDefinition(list, label, value) {
+  function appendDefinition(list, label, value, className = "") {
     const wrapper = document.createElement("div");
+    if (className) wrapper.className = className;
     const term = document.createElement("dt");
     const detail = document.createElement("dd");
     setText(term, label);
@@ -271,6 +344,273 @@
       return "無法計算";
     }
     return `${formatNumber(value * 100, 2)}%`;
+  }
+
+  function appendCells(row, values) {
+    values.forEach((value) => {
+      const cell = document.createElement("td");
+      setText(cell, value);
+      row.appendChild(cell);
+    });
+  }
+
+  function clearRiskRendered() {
+    currentSimulationId = null;
+    const result = byId("risk-result");
+    if (result) result.hidden = true;
+    ["risk-facts", "risk-summary-body", "risk-warning-list"].forEach((id) => clearNode(byId(id)));
+    if (window.EvidenceCharts) window.EvidenceCharts.clear(byId("risk-chart"));
+    const progress = byId("risk-progress");
+    if (progress) {
+      progress.hidden = true;
+      progress.value = 0;
+    }
+    setText(byId("risk-zero-note"), "");
+  }
+
+  function invalidateRiskResult(reason, requestCancel = false, clearInput = false) {
+    riskFormRevision += 1;
+    clearRiskRendered();
+    if (reason) setText(byId("risk-status"), reason);
+    const running = currentRiskJobStatus === "running" || currentRiskJobStatus === "cancel_requested";
+    const jobId = currentRiskJobId;
+    if (requestCancel && running && jobId) {
+      currentRiskJobStatus = "cancel_requested";
+      post("/api/cancel-risk-simulation", { job_id: jobId }).catch(() => {
+        // Polling owns the authoritative terminal state; never attach a stale result.
+      });
+    }
+    if (clearInput) {
+      const startEquity = byId("risk-start-equity");
+      if (startEquity) startEquity.value = "";
+      stopRiskPolling();
+      currentRiskJobId = null;
+      currentRiskJobStatus = null;
+    } else if (!running && currentRiskJobStatus !== "cancel_requested") {
+      currentRiskJobId = null;
+      currentRiskJobStatus = null;
+    }
+    updateControls();
+  }
+
+  function renderSegmentCard(container, title, segment, currency) {
+    const card = document.createElement("article");
+    card.className = "segment-card";
+    const heading = document.createElement("h5");
+    setText(heading, title);
+    card.appendChild(heading);
+    const list = document.createElement("dl");
+    const amountAvailable = Boolean(segment && segment.amounts_available);
+    const pairs = [
+      ["筆數", formatNumber(segment && (segment.count ?? segment.n_trades), 0)],
+      ["平均", amountAvailable ? `${formatNumber(segment.mean)} ${currency}` : "無法計算"],
+      ["中位數", amountAvailable ? `${formatNumber(segment.median)} ${currency}` : "無法計算"],
+      ["勝率", formatPercent(segment && segment.win_rate)],
+      ["日期", segment && segment.start_time && segment.end_time ? `${String(segment.start_time).slice(0, 10)} ～ ${String(segment.end_time).slice(0, 10)}` : "無法計算"],
+    ];
+    pairs.forEach(([label, value]) => {
+      const wrapper = document.createElement("div");
+      const term = document.createElement("dt");
+      const detail = document.createElement("dd");
+      setText(term, label);
+      setText(detail, value);
+      wrapper.append(term, detail);
+      list.appendChild(wrapper);
+    });
+    card.appendChild(list);
+    container.appendChild(card);
+  }
+
+  function renderVisuals(visuals) {
+    const payload = visuals || {};
+    const currency = payload.currency || "";
+    setText(byId("historical-unit"), currency ? `金額 · ${currency}` : "幣別未確認");
+    setText(byId("distribution-unit"), currency ? `每筆 · ${currency}` : "幣別未確認");
+    const charts = window.EvidenceCharts;
+    if (charts) {
+      charts.renderHistorical(byId("historical-chart"), payload.historical || {}, currency);
+      charts.renderDistribution(byId("distribution-chart"), payload.distribution || {}, currency);
+      charts.renderHoldout(byId("holdout-chart"), payload.holdout || {}, currency);
+    }
+
+    const historical = payload.historical || {};
+    if (historical.available && Array.isArray(historical.points) && historical.points.length) {
+      const last = historical.points[historical.points.length - 1];
+      setText(
+        byId("historical-summary"),
+        `期末累積 ${formatNumber(last.cum_pnl)} ${currency}；最大回撤金額 ${formatNumber(historical.max_drawdown_amount)} ${currency}。僅含已平倉交易，不含浮動損益、入金或出金。`
+      );
+    } else {
+      setText(byId("historical-summary"), uiCopy(historical.reason, "無法建立可靠時間曲線。"));
+    }
+
+    const distribution = payload.distribution || {};
+    const distributionBody = byId("distribution-summary-body");
+    clearNode(distributionBody);
+    if (distribution.available && distribution.summary) {
+      const summary = distribution.summary;
+      const row = document.createElement("tr");
+      appendCells(row, [
+        formatNumber(summary.minimum), formatNumber(summary.p05), formatNumber(summary.q1),
+        formatNumber(summary.median), formatNumber(summary.q3), formatNumber(summary.p95),
+        formatNumber(summary.maximum), formatNumber(summary.mean),
+      ]);
+      distributionBody.appendChild(row);
+    } else {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 8;
+      setText(cell, distribution.reason || "無法計算");
+      row.appendChild(cell);
+      distributionBody.appendChild(row);
+    }
+
+    const holdout = payload.holdout || {};
+    const cards = byId("holdout-cards");
+    clearNode(cards);
+    if (holdout.available) {
+      renderSegmentCard(cards, "樣本內（前段）", holdout.in_sample || {}, currency);
+      renderSegmentCard(cards, "樣本外（後段）", holdout.out_sample || {}, currency);
+      setText(byId("holdout-headline"), holdout.headline || "核心未提供前後段結論。");
+    } else {
+      setText(byId("holdout-headline"), uiCopy(holdout.reason, "目前無法做前後段切分。"));
+    }
+    const holdoutNotes = byId("holdout-notes");
+    clearNode(holdoutNotes);
+    const notes = Array.isArray(holdout.interpretation) ? holdout.interpretation : [];
+    notes.concat([
+      "這是完成交易的一次時序切分，不是市場價格策略回測。",
+      "前後段切分不能證明後段在策略設計時完全未被看過。",
+    ]).forEach((note) => {
+      const item = document.createElement("li");
+      setText(item, uiCopy(note));
+      holdoutNotes.appendChild(item);
+    });
+
+    const automation = byId("automation-readiness");
+    clearNode(automation);
+    (Array.isArray(payload.automation_readiness) ? payload.automation_readiness : []).forEach((item) => {
+      const row = document.createElement("li");
+      row.dataset.status = item.status || "unknown";
+      const copy = document.createElement("div");
+      const strong = document.createElement("strong");
+      const detail = document.createElement("small");
+      setText(strong, `${automationLabel(item)}｜${automationStatus(item.status, item.key)}`);
+      setText(detail, uiCopy(item.detail));
+      copy.append(strong, detail);
+      row.appendChild(copy);
+      automation.appendChild(row);
+    });
+
+    const warningList = byId("visual-warning-list");
+    clearNode(warningList);
+    (Array.isArray(payload.warnings) ? payload.warnings : []).forEach((warning) => {
+      const item = document.createElement("li");
+      setText(item, uiCopy(warning));
+      warningList.appendChild(item);
+    });
+    const currencyInput = byId("risk-currency");
+    if (currencyInput) currencyInput.value = currency;
+    setText(
+      byId("risk-availability"),
+      payload.risk_simulation_available
+        ? `可執行情境：${currency} 固定金額損益重抽樣。這不是未來預測。`
+        : uiCopy(payload.risk_simulation_reason, "目前資料不能執行資金情境。")
+    );
+  }
+
+  function renderRiskResult(risk) {
+    clearRiskRendered();
+    currentSimulationId = risk.simulation_id || null;
+    byId("risk-result").hidden = false;
+    const facts = byId("risk-facts");
+    appendDefinition(facts, "起始資金", `${formatNumber(risk.start_equity)} ${risk.currency || ""}`);
+    appendDefinition(facts, "資金警戒線", `${formatNumber(risk.threshold_amount)} ${risk.currency || ""}`);
+    appendDefinition(facts, "曾跌破路徑", `${formatNumber(risk.hit_count, 0)} / ${formatNumber(risk.paths, 0)}（${formatPercent(risk.hit_fraction)}）`);
+    appendDefinition(facts, "首次跌破中位筆數", risk.first_hit ? formatNumber(risk.first_hit.median, 1) : "本次未出現");
+    appendDefinition(facts, "期末 P05", `${formatNumber(risk.terminal && risk.terminal.p05)} ${risk.currency || ""}`);
+    appendDefinition(facts, "期末中位數", `${formatNumber(risk.terminal && risk.terminal.median)} ${risk.currency || ""}`);
+    appendDefinition(facts, "期末 P95", `${formatNumber(risk.terminal && risk.terminal.p95)} ${risk.currency || ""}`);
+    appendDefinition(facts, "停止假設", "嚴格跌破後停止並持有穿越金額");
+    setText(byId("risk-zero-note"), risk.zero_hit_note || (risk.initially_below ? "起始資金已嚴格低於門檻，全部路徑在第 0 筆命中。" : "情境頻率不是未來機率。"));
+    if (window.EvidenceCharts) window.EvidenceCharts.renderRisk(byId("risk-chart"), risk);
+    const body = byId("risk-summary-body");
+    clearNode(body);
+    const terminal = risk.terminal || {};
+    const row = document.createElement("tr");
+    appendCells(row, [
+      formatNumber(terminal.minimum), formatNumber(terminal.p05), formatNumber(terminal.q1),
+      formatNumber(terminal.median), formatNumber(terminal.q3), formatNumber(terminal.p95),
+      formatNumber(terminal.maximum),
+    ]);
+    body.appendChild(row);
+    const warnings = byId("risk-warning-list");
+    clearNode(warnings);
+    (Array.isArray(risk.warnings) ? risk.warnings : []).forEach((warning) => {
+      const item = document.createElement("li");
+      setText(item, warning);
+      warnings.appendChild(item);
+    });
+  }
+
+  function stopRiskPolling() {
+    riskPollNonce += 1;
+    if (riskPollTimer !== null) window.clearTimeout(riskPollTimer);
+    riskPollTimer = null;
+    riskPollInFlight = false;
+  }
+
+  function pollRisk(jobId, formRevision, nonce, attempt = 0, failures = 0) {
+    if (sessionClosed || nonce !== riskPollNonce || jobId !== currentRiskJobId) return;
+    if (attempt >= 120) {
+      stopRiskPolling();
+      currentRiskJobStatus = "failed";
+      showError("資金情境狀態輪詢已達上限；沒有附加未確認結果。");
+      updateControls();
+      return;
+    }
+    riskPollTimer = window.setTimeout(async () => {
+      if (riskPollInFlight || sessionClosed || nonce !== riskPollNonce || jobId !== currentRiskJobId) return;
+      riskPollInFlight = true;
+      try {
+        const job = await api(`/api/risk-simulation/${jobId}`);
+        if (sessionClosed || nonce !== riskPollNonce || jobId !== currentRiskJobId) return;
+        const progress = job.progress || {};
+        const completed = Number(progress.completed_paths) || 0;
+        const total = Number(progress.paths) || 1;
+        byId("risk-progress").hidden = false;
+        byId("risk-progress").value = Math.max(0, Math.min(100, completed / total * 100));
+        setText(byId("risk-status"), `已完成 ${completed.toLocaleString("zh-TW")} / ${total.toLocaleString("zh-TW")} 條路徑`);
+        if (job.status === "running") {
+          currentRiskJobStatus = job.cancel_requested ? "cancel_requested" : "running";
+          pollRisk(jobId, formRevision, nonce, attempt + 1, 0);
+        } else {
+          stopRiskPolling();
+          currentRiskJobStatus = job.status;
+          byId("risk-progress").hidden = true;
+          if (job.status === "completed" && job.result && formRevision === riskFormRevision && job.analysis_id === currentAnalysisId && job.revision === currentAnalysisRevision) {
+            renderRiskResult(job.result);
+            setText(byId("risk-status"), "資金情境完成；匯出時可明確附帶這一版結果。");
+          } else if (job.status === "cancelled") {
+            setText(byId("risk-status"), "資金情境已取消，未附加任何結果。");
+          } else if (job.status === "failed") {
+            showError(job.error || "資金情境計算失敗，未附加任何結果。");
+          }
+          updateControls();
+        }
+      } catch (pollError) {
+        if (nonce !== riskPollNonce) return;
+        if (failures < 2) pollRisk(jobId, formRevision, nonce, attempt + 1, failures + 1);
+        else {
+          stopRiskPolling();
+          currentRiskJobStatus = "failed";
+          showError(pollError && pollError.message ? pollError.message : "無法讀取資金情境狀態。");
+          updateControls();
+        }
+      } finally {
+        riskPollInFlight = false;
+      }
+    }, 250);
   }
 
   function renderManualRows(state) {
@@ -329,7 +669,10 @@
       invalidateLocalResult();
       return;
     }
+    const analysisChanged = currentAnalysisId !== analysis.id || currentAnalysisRevision !== analysis.revision;
+    if (analysisChanged) invalidateRiskResult("目前分析尚未執行資金情境。", true, true);
     currentAnalysisId = analysis.id;
+    currentAnalysisRevision = analysis.revision;
     localResultInvalidated = false;
     byId("no-analysis").hidden = true;
     byId("analysis-content").hidden = false;
@@ -368,34 +711,34 @@
     }
     reasons.forEach((reason) => {
       const item = document.createElement("li");
-      setText(item, reason);
+      setText(item, uiCopy(reason));
       reasonList.appendChild(item);
     });
 
-    setText(byId("stage-title"), STAGE_TITLES[stage.code] || (/[\u3400-\u9fff]/.test(String(stage.title || "")) ? stage.title : "核心未提供階段名稱"));
-    setText(byId("stage-reason"), stage.reason || "核心未提供階段理由。");
+    setText(byId("stage-title"), STAGE_TITLES[stage.code] || (/[\u3400-\u9fff]/.test(String(stage.title || "")) ? uiCopy(stage.title) : "核心未提供階段名稱"));
+    setText(byId("stage-reason"), uiCopy(stage.reason, "核心未提供階段理由。"));
     const actionList = byId("stage-actions");
     clearNode(actionList);
     const actions = Array.isArray(stage.next_actions) ? stage.next_actions : [];
     actions.forEach((action) => {
       const item = document.createElement("li");
-      setText(item, action);
+      setText(item, uiCopy(action));
       actionList.appendChild(item);
     });
     const redFlags = Array.isArray(verdict.red_flags) ? verdict.red_flags : [];
     redFlags.forEach((flag) => {
       const item = document.createElement("li");
-      setText(item, `警告：${flag.message || flag.code || "核心風險訊號"}`);
+      setText(item, `警告：${uiCopy(flag.message || flag.code, "核心風險訊號")}`);
       actionList.appendChild(item);
     });
     (Array.isArray(verdict.reasons) ? verdict.reasons : []).forEach((reason) => {
       const item = document.createElement("li");
-      setText(item, `核心理由：${reason}`);
+      setText(item, `核心理由：${uiCopy(reason)}`);
       actionList.appendChild(item);
     });
     (Array.isArray(verdict.advice) ? verdict.advice : []).forEach((advice) => {
       const item = document.createElement("li");
-      setText(item, `核心建議：${advice}`);
+      setText(item, `核心建議：${uiCopy(advice)}`);
       actionList.appendChild(item);
     });
 
@@ -406,6 +749,13 @@
     appendDefinition(metricList, "總淨損益", `${formatNumber(metrics.total_pnl)}${currency}`);
     appendDefinition(metricList, "勝率", formatPercent(metrics.win_rate));
     appendDefinition(metricList, "每筆期望值", `${formatNumber(metrics.expectancy)}${currency}`);
+    const visuals = analysis.visuals || {};
+    const distribution = visuals.distribution || {};
+    const distributionSummary = distribution.summary || {};
+    const medianValue = Number.isFinite(distributionSummary.median)
+      ? `${formatNumber(distributionSummary.median)}${currency}`
+      : uiCopy(distribution.reason, "—");
+    appendDefinition(metricList, "每筆中位數", medianValue, "metric-highlight");
     appendDefinition(metricList, "盈虧比", formatNumber(metrics.payoff_ratio));
     appendDefinition(metricList, "獲利因子", formatNumber(metrics.profit_factor));
     appendDefinition(metricList, "最大回撤金額", metrics.sequence_metrics_reliable === false ? "無法計算" : `${formatNumber(metrics.max_drawdown)}${currency}`);
@@ -422,14 +772,15 @@
       const copy = document.createElement("div");
       const strong = document.createElement("strong");
       const detail = document.createElement("small");
-      setText(strong, gate.label || gate.key);
-      setText(detail, gate.detail || (gate.passed ? "通過" : "目前未通過"));
+      setText(strong, uiCopy(gate.label || gate.key, "研究檢查項目"));
+      setText(detail, uiCopy(gate.detail, gate.passed ? "通過" : "目前未通過"));
       copy.append(strong, detail);
       item.append(mark, copy);
       readiness.appendChild(item);
     });
 
     setText(byId("text-report"), analysis.text_report || "核心未提供文字報告。");
+    renderVisuals(visuals);
     updateControls();
   }
 
@@ -448,6 +799,18 @@
       renderAnalysis(state.analysis);
     } else {
       invalidateLocalResult();
+    }
+    const riskJob = state.risk_simulation;
+    if (
+      riskJob && riskJob.status === "running" && state.analysis &&
+      riskJob.analysis_id === state.analysis.id && riskJob.revision === state.analysis.revision &&
+      currentRiskJobId !== riskJob.job_id
+    ) {
+      currentRiskJobId = riskJob.job_id;
+      currentRiskJobStatus = riskJob.cancel_requested ? "cancel_requested" : "running";
+      riskPollNonce += 1;
+      const nonce = riskPollNonce;
+      pollRisk(currentRiskJobId, riskFormRevision, nonce);
     }
     if (state.busy) showNotice("本機正在處理一項工作；狀態仍可查看，其他操作請稍候。");
     updateControls();
@@ -510,9 +873,10 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  async function requestDownload(kind, analysisId = null) {
+  async function requestDownload(kind, analysisId = null, simulationId = null) {
     const payload = { kind };
     if (analysisId) payload.analysis_id = analysisId;
+    if (simulationId) payload.simulation_id = simulationId;
     const metadata = await post("/api/export", payload);
     await downloadArtifact(metadata);
   }
@@ -675,11 +1039,103 @@
       button.addEventListener("click", () => {
         runAction(button, async () => {
           if (!currentAnalysisId || localResultInvalidated) throw new Error("目前沒有可下載的分析結果。");
-          await requestDownload(button.dataset.kind, currentAnalysisId);
+          await requestDownload(button.dataset.kind, currentAnalysisId, currentSimulationId);
           showNotice("已要求下載目前這一版分析產物。");
         });
       });
     });
+  }
+
+  function bindRiskSimulation() {
+    const form = byId("risk-form");
+    const kind = byId("risk-threshold-kind");
+    const threshold = byId("risk-threshold-value");
+
+    function updateThresholdLabel() {
+      if (kind.value === "remaining_amount") {
+        setText(byId("risk-threshold-label"), "剩餘固定金額");
+        threshold.removeAttribute("max");
+      } else if (kind.value === "loss_fraction") {
+        setText(byId("risk-threshold-label"), "虧損本金（%）");
+        threshold.max = "100";
+      } else {
+        setText(byId("risk-threshold-label"), "剩餘本金（%）");
+        threshold.max = "100";
+      }
+      threshold.min = "0";
+    }
+
+    form.addEventListener("input", () => {
+      invalidateRiskResult("情境參數已變更；舊結果已停止顯示與匯出。", true);
+    });
+    kind.addEventListener("change", () => {
+      updateThresholdLabel();
+      invalidateRiskResult("門檻意思已變更；舊結果已停止顯示與匯出。", true);
+    });
+    updateThresholdLabel();
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const button = event.submitter;
+      runAction(button, async () => {
+        if (!currentAnalysisId || !currentAnalysisRevision || localResultInvalidated) {
+          throw new Error("目前沒有可綁定的分析結果。");
+        }
+        if (!form.reportValidity()) throw new Error("請補齊資金情境參數。");
+        const data = Object.fromEntries(new FormData(form).entries());
+        const startEquity = Number(data.start_equity);
+        const rawThreshold = Number(data.threshold_value);
+        const futureTrades = Number(data.future_trades);
+        const paths = Number(data.paths);
+        if (!Number.isFinite(startEquity) || startEquity <= 0) throw new Error("起始資金必須是大於 0 的有限數字。");
+        if (!Number.isFinite(rawThreshold) || rawThreshold < 0) throw new Error("門檻數值必須是非負有限數字。");
+        if (!Number.isInteger(futureTrades) || futureTrades < 1 || futureTrades > 1000) throw new Error("未來交易筆數必須是 1 到 1,000 的整數。");
+        if (!Number.isInteger(paths) || paths < 100 || paths > 5000) throw new Error("模擬路徑數必須是 100 到 5,000 的整數。");
+        if (futureTrades * paths > 1000000) throw new Error("交易筆數 × 路徑數不可超過 1,000,000。");
+        const fractionKind = data.threshold_kind === "remaining_fraction" || data.threshold_kind === "loss_fraction";
+        if (fractionKind && rawThreshold > 100) throw new Error("比例不可超過 100%。");
+        const apiThreshold = fractionKind ? rawThreshold / 100 : rawThreshold;
+        const currency = String(data.currency || "").trim().toUpperCase();
+        if (!currency) throw new Error("目前紀錄沒有已確認的結算幣別。");
+
+        clearRiskRendered();
+        setText(byId("risk-status"), "正在建立有界資金情境……");
+        byId("risk-progress").hidden = false;
+        byId("risk-progress").value = 0;
+        const formRevision = riskFormRevision;
+        const job = await post("/api/risk-simulation", {
+          analysis_id: currentAnalysisId,
+          revision: currentAnalysisRevision,
+          start_equity: startEquity,
+          currency,
+          threshold_kind: data.threshold_kind,
+          threshold_value: apiThreshold,
+          future_trades: futureTrades,
+          paths,
+        });
+        currentRiskJobId = job.job_id;
+        currentRiskJobStatus = "running";
+        if (currentState) currentState.busy = true;
+        riskPollNonce += 1;
+        const nonce = riskPollNonce;
+        pollRisk(currentRiskJobId, formRevision, nonce);
+        updateControls();
+      });
+    });
+
+    byId("cancel-risk").addEventListener("click", async () => {
+      if (!currentRiskJobId || currentRiskJobStatus !== "running" || sessionClosed) return;
+      currentRiskJobStatus = "cancel_requested";
+      updateControls();
+      setText(byId("risk-status"), "正在取消資金情境……");
+      try {
+        await post("/api/cancel-risk-simulation", { job_id: currentRiskJobId });
+      } catch (cancelError) {
+        showError(cancelError && cancelError.message ? cancelError.message : "無法送出取消要求。");
+      }
+    });
+
+    byId("go-paper").addEventListener("click", () => selectSection("paper", true));
   }
 
   function bindScanner() {
@@ -782,6 +1238,7 @@
     bindRestoreRecords();
     bindRecordForm();
     bindResultDownloads();
+    bindRiskSimulation();
     bindScanner();
     bindScaffold();
     bindQuit();

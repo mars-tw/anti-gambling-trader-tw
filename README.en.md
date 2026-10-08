@@ -4,7 +4,7 @@
 
 ## Beginner GUI first (about five minutes after installation)
 
-Version 0.2.0 provides one local UI in two user-selected shells:
+Version 0.3.0 provides one local UI in two user-selected shells:
 
 - **Local browser mode** uses only the Python standard library and opens in your default browser.
 - **Desktop window mode** loads the exact same URL and service in a native WebView window.
@@ -28,8 +28,15 @@ anti-gambling-trader ui --mode desktop
 
 If the desktop renderer is unavailable, use `--mode browser`. Both modes bind only to
 `127.0.0.1` and follow the same beginner flow: try a labeled sample, import or manually record,
-read integrity and the core stage, download a report, then optionally download a paper scaffold.
+read integrity, the core stage, and evidence charts; optionally run a bounded capital-warning
+scenario with an explicitly supplied starting balance; download a report; then optionally download a paper scaffold.
 Bundled samples are demonstrations, never your results.
+
+Both shells use the same local, dependency-free SVG evidence views: cumulative realized net P&L
+and drawdown, an R7 quantile/histogram view, the actual one-split holdout comparison, and a separate
+capital-warning scenario. The scenario never guesses starting capital: enter a positive balance,
+confirm the one settlement currency, and choose remaining-capital percentage, remaining amount, or
+loss percentage explicitly. Charts never override the core stage or enable live trading.
 
 Manual rows and analyses may use local temporary files; source files are never modified. Normal
 completion or exit clears these temporary files, but an unexpected failure or forced stop may
@@ -62,7 +69,8 @@ analyzes trade records locally and does not upload them. If you give files, scre
 to Claude Code or another cloud AI, the content may be transmitted and retained under that provider's
 policy; mask names, account numbers, LINE IDs, and other identifiers first. See the
 [official Claude Code data-usage documentation](https://code.claude.com/docs/en/data-usage).
-Some generated charts load an external CDN, and broker/API paths explicitly connect to their external services.
+Some generated project charts may load an external CDN; the 0.3.0 workbench evidence SVGs and HTML
+exports do not. Broker/API paths explicitly connect to their external services.
 
 > A tool that is **honest to the point of being unlikable**. It will not tell you "you will make money" —
 > if your record is not suited to long-term investing, it will plainly talk you out of it.
