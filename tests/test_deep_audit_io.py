@@ -271,7 +271,7 @@ def test_ci_matrix_and_relocated_wheel_smoke_contract():
         "windows-latest",
         '"3.10"',
         '"3.13"',
-        "pip install -e .[dev] build",
+        'pip install -e ".[dev,excel]" build',
         "python -m pytest",
         "python -m build --wheel",
         "PYTHONPATH",

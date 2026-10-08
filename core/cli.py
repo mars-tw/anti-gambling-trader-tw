@@ -62,11 +62,11 @@ def _force_utf8_stdout() -> None:
             except (ValueError, OSError):
                 pass
     try:
-        if not sys.stdin.isatty():
+        if sys.stdin is not None and not sys.stdin.isatty():
             reconfigure = getattr(sys.stdin, "reconfigure", None)
             if reconfigure is not None:
                 reconfigure(encoding="utf-8", errors="replace")
-    except (ValueError, OSError):
+    except (AttributeError, ValueError, OSError):
         pass
 
 
@@ -330,6 +330,9 @@ def _cmd_start(_args) -> int:
 ==============================================================
 你現在手上有什麼？依情況複製下面一條命令：
 
+  0. 想用圖形介面（瀏覽器版或桌面視窗版）
+     anti-gambling-trader ui
+
   1. 有完整交易紀錄
      anti-gambling-trader fit-check 你的交易.csv
 
@@ -347,6 +350,19 @@ def _cmd_start(_args) -> int:
 """
     )
     return 0
+
+
+def _cmd_ui(args) -> int:
+    """Lazy-load the optional UI path without changing existing CLI imports."""
+
+    from .ui.launcher import run_ui
+
+    return run_ui(
+        mode=args.mode,
+        port=args.port,
+        no_open=args.no_open,
+        ready_file=args.ready_file,
+    )
 
 
 def _cmd_record(args) -> int:
@@ -596,6 +612,25 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # ── start:新手唯一入口 ──
     sub.add_parser("start", help="第一次使用?依你手上的資料選最短路徑")
+
+    ui = sub.add_parser("ui", help="啟動本機新手圖形工作台（瀏覽器或桌面視窗）")
+    ui.add_argument(
+        "--mode",
+        choices=["choose", "browser", "desktop"],
+        default="choose",
+        help="預設 choose；也可直接指定 browser 或 desktop",
+    )
+    ui.add_argument("--port", type=int, default=0, help="本機連接埠；0 為自動選擇")
+    ui.add_argument(
+        "--no-open",
+        action="store_true",
+        help="瀏覽器模式只印本機網址，不自動開頁",
+    )
+    ui.add_argument(
+        "--ready-file",
+        metavar="PATH",
+        help="就緒後 exclusive-create 非機密 JSON（供自動驗收）",
+    )
 
     a = sub.add_parser("analyze", help="分析一份交易紀錄")
     a.add_argument("file", nargs="?", help="交易紀錄檔(.csv / .json / .xlsx)")
@@ -852,6 +887,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "start":
         return _cmd_start(args)
+
+    if args.command == "ui":
+        if isinstance(args.port, bool) or not 0 <= args.port <= 65535:
+            print("錯誤: --port 必須介於 0 與 65535", file=sys.stderr)
+            return 2
+        return _cmd_ui(args)
 
     if args.command == "analyze":
         # 決定要分析哪個檔案:--example 範例 > 指定檔案 > 無檔案導流

@@ -25,7 +25,7 @@ jobs:
           cache: pip
 
       - name: Install development dependencies
-        run: python -m pip install -e .[dev] build
+        run: python -m pip install -e ".[dev,excel]" build
 
       - name: Run complete offline test suite
         run: python -m pytest -q -p no:cacheprovider
@@ -41,10 +41,21 @@ jobs:
           import sys
           import tempfile
           import venv
+          import zipfile
           from pathlib import Path
 
           workspace = Path.cwd().resolve()
           wheel = next((workspace / "dist").glob("*.whl"))
+          with zipfile.ZipFile(wheel) as archive:
+              names = set(archive.namelist())
+          required_ui = {
+              "core/ui/static/index.html",
+              "core/ui/static/app.css",
+              "core/ui/static/app.js",
+          }
+          missing_ui = required_ui - names
+          if missing_ui:
+              raise RuntimeError(f"wheel is missing UI assets: {sorted(missing_ui)}")
           temp_parent = os.environ.get("RUNNER_TEMP")
           with tempfile.TemporaryDirectory(dir=temp_parent) as raw_temp:
               temp = Path(raw_temp)
@@ -69,6 +80,37 @@ jobs:
                       env=env,
                       check=True,
                   )
+              ui_smoke = r'''
+          import json
+          import urllib.request
+          from core.ui.server import start_server
+
+          server = start_server(mode="browser")
+          try:
+              with urllib.request.urlopen(server.url + "/api/health", timeout=5) as response:
+                  health = json.loads(response.read().decode("utf-8"))
+              assert health["instance_id"] == server.instance_id
+              assert health["mode"] == "browser"
+              with urllib.request.urlopen(server.url + "/", timeout=5) as response:
+                  page = response.read().decode("utf-8")
+              assert "反詐投資王｜新手工作台" in page
+              request = urllib.request.Request(
+                  server.url + "/api/state",
+                  headers={"X-UI-Token": server.token},
+              )
+              with urllib.request.urlopen(request, timeout=5) as response:
+                  state = json.loads(response.read().decode("utf-8"))
+              assert state["capabilities"]["live_trading"] is False
+          finally:
+              server.shutdown()
+              assert server.wait(5)
+          '''
+              subprocess.run(
+                  [str(python), "-c", ui_smoke],
+                  cwd=external,
+                  env=env,
+                  check=True,
+              )
               subprocess.run(
                   [
                       str(python), "-m", "core.cli", "scaffold",

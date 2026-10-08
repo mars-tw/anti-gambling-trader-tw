@@ -2,6 +2,55 @@
 
 [繁體中文](README.md)
 
+## Beginner GUI first (about five minutes after installation)
+
+Version 0.2.0 provides one local UI in two user-selected shells:
+
+- **Local browser mode** uses only the Python standard library and opens in your default browser.
+- **Desktop window mode** loads the exact same URL and service in a native WebView window.
+
+Install and start browser mode from source:
+
+```bash
+pip install -e .
+anti-gambling-trader ui                 # choose browser or desktop
+anti-gambling-trader ui --mode browser  # open browser mode directly
+```
+
+On Windows, `start-ui.cmd` is also available. It prefers the repository's `.venv` and never
+installs anything silently. Desktop mode and Excel import are optional; Windows desktop mode
+also requires the Microsoft Edge WebView2 Runtime:
+
+```bash
+pip install -e ".[desktop,excel]"
+anti-gambling-trader ui --mode desktop
+```
+
+If the desktop renderer is unavailable, use `--mode browser`. Both modes bind only to
+`127.0.0.1` and follow the same beginner flow: try a labeled sample, import or manually record,
+read integrity and the core stage, download a report, then optionally download a paper scaffold.
+Bundled samples are demonstrations, never your results.
+
+Manual rows and analyses may use local temporary files; source files are never modified. Normal
+completion or exit clears these temporary files, but an unexpected failure or forced stop may
+leave system temporary files behind. Downloads are explicit persistent copies—download anything
+you want to keep. After a restart, load the downloaded current-record CSV from **Load previous
+records** to continue. Closing a browser tab does not stop the local server—use **End this
+session** in the UI or press `Ctrl+C` in the terminal.
+
+Automation can use `--no-open --ready-file ui-ready.json`. The ready JSON contains only the
+local URL, PID, mode, instance ID, and ready state—never the session nonce—and an existing file
+is never overwritten. Maintainers can build a Windows onedir bundle and ZIP from an environment
+with the desktop dependencies installed by running
+`python scripts/build_windows_ui.py --output dist`. This is a build instruction, not a claim or
+link to an executable release that has not yet passed portable validation.
+
+> **Live trading is not provided.** The GUI accepts no broker keys, makes no broker connection,
+> and submits no orders. Even if the analytical core reports `tiny_live_validation`, the GUI
+> remains live-disabled. Every generated project is fixed to `PaperBroker`, `stage=None`, and
+> false live flags; it is only a strategy scaffold to complete. The GitHub Pages site contains
+> instructions only—it is not a hosted analysis application and does not accept trade records.
+
 **Wondering whether that investment group is a scam, whether the "guru" calling trades can be trusted, or whether your trading profits come from skill or luck?**
 This is a free, open-source toolkit for trading statistics, investment-fraud defense and
 automated-trading development: feed it your trade history (Taiwan stocks / US stocks / crypto),
@@ -131,7 +180,7 @@ cd anti-gambling-trader-tw
 pip install -e .            # install the package and CLI
 
 # Optional dependencies:
-# pip install openpyxl       # only for Excel (.xlsx) input
+# pip install -e ".[excel]" # only for Excel (.xlsx), including safe XML parsing
 # pip install -e ".[screenshot]"  # image OCR; Tesseract + language data also required
 # pip install backtrader     # only to run a backtrader skeleton (or install vectorbt)
 ```

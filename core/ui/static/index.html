@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="ui-token" content="__UI_TOKEN__">
+  <title>反詐投資王｜新手工作台</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#workspace">跳到主要內容</a>
+  <div class="shell">
+    <aside class="sidebar" aria-label="工作台導覽">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <div>
+          <p class="eyebrow">ANTI-GAMBLING TRADER</p>
+          <p class="brand-name">反詐投資王</p>
+        </div>
+      </div>
+
+      <nav class="section-nav" aria-label="五步工作流程">
+        <button class="nav-button is-active" type="button" data-section="start" aria-controls="section-start" aria-current="page">
+          <span>01</span>開始使用
+        </button>
+        <button class="nav-button" type="button" data-section="records" aria-controls="section-records">
+          <span>02</span>交易紀錄
+        </button>
+        <button class="nav-button" type="button" data-section="results" aria-controls="section-results">
+          <span>03</span>分析結果
+        </button>
+        <button class="nav-button" type="button" data-section="scan" aria-controls="section-scan">
+          <span>04</span>訊息檢查
+        </button>
+        <button class="nav-button" type="button" data-section="paper" aria-controls="section-paper">
+          <span>05</span>紙上專案
+        </button>
+      </nav>
+
+      <div class="session-card">
+        <span id="mode-badge" class="mode-badge">本機瀏覽器版</span>
+        <p><strong>本機工作階段資料</strong></p>
+        <p>分析可能使用本機暫存檔；正常結束會清理，非預期中止可能留下系統暫存。需要保留請下載。</p>
+      </div>
+
+      <button id="quit-button" class="quiet-button quit-button" type="button">結束本次使用</button>
+    </aside>
+
+    <main id="workspace" class="workspace" tabindex="-1">
+      <header class="topline">
+        <div>
+          <p class="eyebrow">LOCAL BEGINNER WORKSPACE · 0.2</p>
+          <h1>把紀錄攤開，<br>讓證據自己說話。</h1>
+        </div>
+        <div class="local-note">
+          <span class="status-dot" aria-hidden="true"></span>
+          <div>
+            <strong>本機工作階段</strong>
+            <p>資料只在這台電腦處理，匯入檔案不會送到雲端。</p>
+          </div>
+        </div>
+      </header>
+
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+      <div id="error" class="notice notice-error" role="alert" aria-live="assertive" hidden></div>
+
+      <section id="section-start" class="panel-section" data-panel="start">
+        <div class="section-kicker">01 · START HERE</div>
+        <div class="section-heading">
+          <div>
+            <h2>安裝完成後，五分鐘看懂流程</h2>
+            <p>先用內建樣本熟悉畫面，再匯入自己的完整紀錄，或從今天逐筆記。</p>
+          </div>
+          <p class="margin-note">樣本只示範工具如何判讀，<strong>不是你的績效</strong>，也不是投資建議。</p>
+        </div>
+
+        <div class="sample-strip" aria-label="內建示範樣本">
+          <div class="sample-intro">
+            <p class="label">先試一次</p>
+            <h3>選一份明確標示的示範</h3>
+          </div>
+          <button class="sample-button" type="button" data-sample="tw">
+            <span>台股</span><small>高風險交易範例</small>
+          </button>
+          <button class="sample-button" type="button" data-sample="us">
+            <span>美股</span><small>正向樣本範例</small>
+          </button>
+          <button class="sample-button" type="button" data-sample="crypto">
+            <span>加密貨幣</span><small>運氣與波動範例</small>
+          </button>
+        </div>
+
+        <ol class="flow-list">
+          <li><span>1</span><div><strong>試看樣本</strong><p>先認識完整性、階段與研究檢查表。</p></div></li>
+          <li><span>2</span><div><strong>帶入紀錄</strong><p>匯入 CSV／JSON／Excel，或手動新增已平倉交易。</p></div></li>
+          <li><span>3</span><div><strong>讀完警告</strong><p>先看資料缺口，再看統計結果；「無法計算」不等於 0。</p></div></li>
+          <li><span>4</span><div><strong>下載留存</strong><p>報告與紀錄請主動下載；分析可能使用本機暫存檔，正常結束會清理，非預期中止可能留下系統暫存。</p></div></li>
+          <li><span>5</span><div><strong>只做紙上專案</strong><p>產生可填寫策略的 PaperBroker 鷹架；這個 GUI 不提供實盤。</p></div></li>
+        </ol>
+
+        <div class="amber-note">
+          <strong>真實下單：未提供</strong>
+          <p>即使核心分析顯示「極小額驗證」，這個新手工作台也不會連券商、不收金鑰、不送單。</p>
+        </div>
+      </section>
+
+      <section id="section-records" class="panel-section" data-panel="records" hidden>
+        <div class="section-kicker">02 · RECORDS</div>
+        <div class="section-heading">
+          <div>
+            <h2>交易紀錄</h2>
+            <p>原始檔只讀取分析，不會被修改。分析可能使用本機暫存檔；正常完成或正常結束會清理，非預期失敗或強制停止可能留下系統暫存。需要保留請下載。</p>
+          </div>
+          <p class="margin-note">上限：檔案 2MiB、解析後 2,000 筆。Excel 需安裝選配套件。</p>
+        </div>
+
+        <div class="split-layout">
+          <form id="upload-form" class="ledger-form" novalidate>
+            <fieldset>
+              <legend>匯入現有檔案</legend>
+              <label class="file-picker" for="trade-file">
+                <span>選擇 CSV、JSON 或 XLSX</span>
+                <input id="trade-file" name="trade-file" type="file" accept=".csv,.json,.xlsx">
+              </label>
+              <p id="file-name" class="field-hint">尚未選擇檔案</p>
+              <p id="excel-note" class="field-hint"></p>
+              <button class="primary-button" type="submit">分析這份檔案</button>
+            </fieldset>
+          </form>
+
+          <form id="record-form" class="ledger-form" novalidate>
+            <fieldset>
+              <legend>手動記一筆已平倉交易</legend>
+              <div class="field-grid">
+                <label>標的代號 <span aria-hidden="true">*</span>
+                  <input name="symbol" maxlength="64" required autocomplete="off" placeholder="例如 2330、AAPL">
+                </label>
+                <label>已實現淨損益
+                  <input name="pnl" inputmode="decimal" autocomplete="off" placeholder="例如 -1250">
+                </label>
+                <label>損益幣別 <span aria-hidden="true">*</span>
+                  <select name="currency" required>
+                    <option value="">請明確選擇</option>
+                    <option value="TWD">TWD</option>
+                    <option value="USD">USD</option>
+                    <option value="JPY">JPY</option>
+                    <option value="EUR">EUR</option>
+                    <option value="HKD">HKD</option>
+                    <option value="USDT">USDT</option>
+                  </select>
+                </label>
+                <label>實際出場日期／時間 <span aria-hidden="true">*</span>
+                  <input name="exit_time" type="datetime-local" required>
+                </label>
+                <label>方向
+                  <select name="side">
+                    <option value="unknown">未知</option>
+                    <option value="long">做多</option>
+                    <option value="short">做空</option>
+                  </select>
+                </label>
+                <label>實際進場日期／時間（選填）
+                  <input name="entry_time" type="datetime-local">
+                </label>
+                <label class="wide-field">當時的進場理由／標籤（選填）
+                  <input name="strategy" maxlength="200" autocomplete="off" placeholder="不要看到結果後美化">
+                </label>
+              </div>
+
+              <details class="advanced-fields">
+                <summary>不知道淨損益？改填進出場價、數量與費用</summary>
+                <p>若淨損益留白，進場價、出場價、數量與方向都必須完整；台股請填股數（1張=1,000股）。</p>
+                <div class="field-grid">
+                  <label>進場價<input name="entry_price" inputmode="decimal" autocomplete="off"></label>
+                  <label>出場價<input name="exit_price" inputmode="decimal" autocomplete="off"></label>
+                  <label>數量（台股請填股數）<input name="quantity" inputmode="decimal" autocomplete="off"></label>
+                  <label>手續費與稅<input name="fees" inputmode="decimal" autocomplete="off"></label>
+                </div>
+              </details>
+
+              <button class="primary-button" type="submit">加入本次表格</button>
+            </fieldset>
+          </form>
+        </div>
+
+        <form id="restore-records-form" class="ledger-form restore-form" novalidate>
+          <fieldset>
+            <legend>載入先前逐筆紀錄</legend>
+            <p class="field-hint">只接受從這個工作台下載的「目前紀錄 CSV」。載入後會取代本次表格；原始 CSV 不會被修改。</p>
+            <label class="file-picker compact-picker" for="records-file">
+              <span>選擇先前下載的逐筆紀錄 CSV</span>
+              <input id="records-file" name="records-file" type="file" accept=".csv">
+            </label>
+            <p id="records-file-name" class="field-hint">尚未選擇 CSV</p>
+            <button id="restore-records" class="quiet-button" type="submit">載入並取代本次表格</button>
+          </fieldset>
+        </form>
+
+        <div class="records-ledger" aria-labelledby="manual-title">
+          <div class="ledger-toolbar">
+            <div>
+              <p class="label">SESSION LEDGER</p>
+              <h3 id="manual-title">本次手動紀錄 <span id="record-count">0 筆</span></h3>
+            </div>
+            <div class="button-row">
+              <button id="download-template" class="quiet-button" type="button">下載空白 CSV 範本</button>
+              <button id="download-records" class="quiet-button" type="button">下載目前紀錄 CSV</button>
+              <button id="analyze-records" class="primary-button" type="button">分析目前紀錄</button>
+            </div>
+          </div>
+          <div class="table-scroll" tabindex="0" aria-label="手動紀錄表格，可水平捲動">
+            <table>
+              <thead><tr><th>序號</th><th>代號</th><th>損益</th><th>幣別</th><th>出場時間</th><th>方向</th><th>操作</th></tr></thead>
+              <tbody id="manual-body"></tbody>
+            </table>
+          </div>
+          <p id="empty-records" class="empty-state">還沒有手動紀錄。新增後可隨時移除誤填的一筆。</p>
+        </div>
+      </section>
+
+      <section id="section-results" class="panel-section" data-panel="results" hidden>
+        <div class="section-kicker">03 · EVIDENCE</div>
+        <div class="section-heading">
+          <div>
+            <h2>分析結果</h2>
+            <p>先確認來源與資料完整性，再讀核心引擎給出的原始階段與行動。</p>
+          </div>
+          <div class="live-off"><span>LIVE</span><strong>未提供</strong></div>
+        </div>
+
+        <div id="no-analysis" class="empty-result">
+          <p class="label">NO CURRENT ANALYSIS</p>
+          <h3>尚無可顯示的結果</h3>
+          <p>到「開始使用」試樣本，或到「交易紀錄」匯入／新增資料。</p>
+        </div>
+
+        <div id="analysis-content" hidden>
+          <div id="origin-banner" class="source-banner"></div>
+
+          <article class="result-block integrity-block">
+            <p class="label">先看資料</p>
+            <div class="result-title-row">
+              <h3>完整性</h3>
+              <span id="integrity-status" class="status-pill"></span>
+            </div>
+            <dl id="integrity-list" class="fact-list"></dl>
+            <ul id="integrity-reasons" class="warning-list"></ul>
+          </article>
+
+          <article class="result-block stage-block">
+            <p class="label">核心目前階段</p>
+            <h3 id="stage-title"></h3>
+            <p id="stage-reason" class="stage-reason"></p>
+            <ul id="stage-actions" class="action-list"></ul>
+            <div class="amber-note compact">
+              <strong>這個 GUI 的真實下單仍為「未提供」</strong>
+              <p>分析階段是研究資訊，不是解鎖按鈕。</p>
+            </div>
+          </article>
+
+          <article class="result-block">
+            <p class="label">MEANINGFUL METRICS</p>
+            <h3>關鍵數字</h3>
+            <dl id="metrics-list" class="metrics-list"></dl>
+            <p class="field-hint">「無法計算」代表資料基準不足，不能當成 0。</p>
+          </article>
+
+          <article class="result-block">
+            <p class="label">8 RESEARCH GATES</p>
+            <h3>研究檢查表</h3>
+            <p>這些通過／未通過只描述證據，不會自動允許真錢交易。</p>
+            <ul id="readiness-list" class="gate-list"></ul>
+          </article>
+
+          <div class="download-bar" aria-label="下載目前分析">
+            <div><p class="label">KEEP A COPY</p><strong>主動下載你要保留的資料</strong></div>
+            <div class="button-row">
+              <button class="quiet-button analysis-download" type="button" data-kind="json">JSON</button>
+              <button class="quiet-button analysis-download" type="button" data-kind="html">HTML 報告</button>
+              <button class="quiet-button analysis-download" type="button" data-kind="card">分享卡</button>
+            </div>
+          </div>
+
+          <details class="full-report">
+            <summary>展開完整純文字報告</summary>
+            <pre id="text-report"></pre>
+          </details>
+        </div>
+      </section>
+
+      <section id="section-scan" class="panel-section" data-panel="scan" hidden>
+        <div class="section-kicker">04 · MESSAGE CHECK</div>
+        <div class="section-heading">
+          <div>
+            <h2>訊息檢查</h2>
+            <p>貼上群組對話或廣告文案；只顯示核心風險等級與實際命中，不編造詐騙百分比。</p>
+          </div>
+          <p class="margin-note">最多 20,000 字。這是話術特徵檢查，不是司法鑑定。</p>
+        </div>
+        <form id="scan-form" class="scan-form">
+          <label for="scan-text">要檢查的文字</label>
+          <textarea id="scan-text" name="text" maxlength="20000" rows="9" placeholder="例如：老師說保證獲利，要先匯解凍金……"></textarea>
+          <div class="form-footer"><span id="scan-count">0 / 20,000</span><button class="primary-button" type="submit">檢查訊息</button></div>
+        </form>
+        <article id="scan-result" class="result-block" hidden>
+          <div class="result-title-row"><h3 id="scan-level"></h3><span id="scan-discussion" class="status-pill"></span></div>
+          <p id="scan-headline" class="stage-reason"></p>
+          <ul id="scan-hits" class="warning-list"></ul>
+          <ul id="scan-advice" class="action-list"></ul>
+          <details class="full-report"><summary>展開原始掃描報告</summary><pre id="scan-report"></pre></details>
+        </article>
+      </section>
+
+      <section id="section-paper" class="panel-section" data-panel="paper" hidden>
+        <div class="section-kicker">05 · PAPER PROJECT</div>
+        <div class="section-heading">
+          <div>
+            <h2>紙上交易專案</h2>
+            <p>不需要先有分析資料。下載一份待你填策略規則的 PaperBroker 專案鷹架。</p>
+          </div>
+          <p class="margin-note">它不是正在執行的交易程式，不會連券商，也不代表已通過實盤驗證。</p>
+        </div>
+        <form id="scaffold-form" class="ledger-form paper-form">
+          <fieldset>
+            <legend>建立 ZIP 鷹架</legend>
+            <div class="field-grid">
+              <label>專案名稱 <span aria-hidden="true">*</span>
+                <input name="project_name" required maxlength="64" value="my_paper_strategy" autocomplete="off">
+              </label>
+              <label>標的代號（逗號分隔） <span aria-hidden="true">*</span>
+                <input name="symbols" required value="AAPL" autocomplete="off">
+              </label>
+              <label>市場
+                <select name="market">
+                  <option value="us_stock">美股</option>
+                  <option value="tw_stock">台股</option>
+                  <option value="crypto">加密貨幣</option>
+                  <option value="forex">外匯</option>
+                </select>
+              </label>
+            </div>
+            <div class="amber-note compact"><strong>固定安全設定</strong><p>僅紙上模擬；未開啟真實下單。</p></div>
+            <button class="primary-button" type="submit">產生並下載紙上專案 ZIP</button>
+          </fieldset>
+        </form>
+      </section>
+
+      <footer class="workspace-footer">
+        <span>本工具提供統計與話術特徵分析，不構成投資建議。</span>
+        <span>若疑似遭詐，停止匯款並聯絡 165／警方。</span>
+      </footer>
+    </main>
+  </div>
+
+  <div id="closed-screen" class="closed-screen" role="status" hidden>
+    <div><p class="eyebrow">SESSION CLOSED</p><h2>本次使用已結束</h2><p>已送出結束要求。可關閉此頁；已下載檔案會保留。</p></div>
+  </div>
+
+  <div id="confirm-panel" class="confirm-panel" hidden>
+    <section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+      <p class="eyebrow">PLEASE CONFIRM</p>
+      <h2 id="confirm-title">確認操作</h2>
+      <p id="confirm-message"></p>
+      <div class="button-row">
+        <button id="confirm-cancel" class="quiet-button" type="button">返回</button>
+        <button id="confirm-accept" class="primary-button confirm-danger" type="button">確認</button>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

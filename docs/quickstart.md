@@ -1,16 +1,63 @@
 ---
-title: "新手快速上手|15 分鐘從零到第一份報告"
-description: "沒用過終端機也能上手:安裝 Python、執行 demo、分析自己的交易紀錄,一步一步照著做。"
+title: "新手快速上手｜安裝後 5 分鐘開啟圖形工作台"
+description: "Windows 可攜版三步驟即可開啟本機圖形工作台；也提供原始碼、Mac 與 Linux 的選用安裝路徑。"
 ---
 
 # 新手快速上手指南（完全沒用過電腦命令也能跟著做）
 
 這份指南是給**完全的新手**看的 —— 就算你沒聽過「終端機」、沒裝過 Python、
-沒用過 AI，只要照著一步一步做，大約 **15 分鐘**就能用這個工具分析你的交易、
+沒用過 AI，只要照著一步一步做；安裝完成後，大約 **5 分鐘**就能用圖形工作台試看
+示範分析，再帶入自己的交易、
 看出自己到底是在投資還是在賭博、甚至檢查自己是不是遇到投資詐騙。
 
 > 看不懂某個詞沒關係，照著打就對了。每一步都會告訴你「應該會看到什麼」，
 > 對得上就代表你做對了。
+
+## Windows 10/11 x64：可攜版 3 步驟
+
+不想先安裝 Python？Windows 10/11 x64 可以直接使用可攜版：
+
+1. 從 [v0.2.0 發行頁](https://github.com/mars-tw/anti-gambling-trader-tw/releases/tag/v0.2.0)
+   下載 [AntiGamblingTrader-windows-x64.zip](https://github.com/mars-tw/anti-gambling-trader-tw/releases/download/v0.2.0/AntiGamblingTrader-windows-x64.zip)。
+2. 解壓縮**整個資料夾**，不要只把裡面的 exe 單獨拖出來。
+3. 雙擊 `AntiGamblingTrader.exe`，再選擇本機瀏覽器版或獨立應用程式視窗。
+
+這個可攜版適用 Windows 10/11 x64。桌面視窗需要電腦已安裝 Microsoft Edge WebView2 Runtime；
+若未安裝或桌面視窗無法開啟，請選本機瀏覽器版。WebView2 Runtime 不會隨 ZIP 一起打包。
+
+Windows 可攜版使用者完成上面 3 步驟後，可以跳過下面的 Python、終端機與原始碼安裝步驟。
+
+## 原始碼／Mac／Linux 路徑（可選）
+
+以下內容只給使用原始碼、Mac 或 Linux 的讀者；Windows 可攜版使用者可以略過，直接閱讀後面的使用說明。
+
+### 安裝完成後，先選你要的畫面
+
+最簡單的入口是：
+
+```bash
+anti-gambling-trader ui
+```
+
+小選擇器會讓你決定：
+
+- **本機瀏覽器版**：不需額外套件；也可直接執行
+  `anti-gambling-trader ui --mode browser`。
+- **桌面視窗版**：需先執行 `pip install -e ".[desktop,excel]"`；Windows 還需要
+  Microsoft Edge WebView2 Runtime。若開不起來，改用瀏覽器版即可。
+
+Windows 原始碼使用者也可雙擊專案根目錄的 `start-ui.cmd`。它不會偷偷安裝套件。
+畫面依序帶你「試樣本 → 匯入或手動記錄 → 看完整性與階段 → 下載報告 → 紙上專案」。
+樣本一定標示為示範，不是你的成績。
+
+> 工作台只連本機 `127.0.0.1`。原始匯入檔不會被修改；分析可能使用本機暫存檔。正常完成
+> 或正常結束會清理這些暫存，但非預期失敗或強制停止可能讓系統暫存檔留在本機。報告與
+> CSV 只有在你主動下載後才會成為持久副本；下載「目前紀錄 CSV」後，重新啟動工作台可在
+> 「載入先前逐筆紀錄」重新載入，繼續之前的紀錄。只關瀏覽器分頁不等於停止服務，請按
+> 「結束本次使用」或回終端機按 `Ctrl+C`。
+>
+> GUI **不提供實盤**：沒有券商金鑰欄、沒有解鎖、沒有真單。紙上專案 ZIP 固定使用
+> PaperBroker，只是待你填策略的鷹架。
 
 ---
 
@@ -23,7 +70,9 @@ description: "沒用過終端機也能上手:安裝 Python、執行 demo、分�
 
 ---
 
-## 第一步：安裝 Python（這個工具的引擎）
+## 第一步：安裝 Python（可選；原始碼／Mac／Linux 使用者）
+
+> Windows 可攜版使用者不需要安裝 Python，也不需要完成本節與後續原始碼安裝步驟。
 
 這個工具是用一種叫 **Python** 的程式語言寫的，所以要先把 Python 裝到你的電腦上。
 **只需要裝一次**，以後就不用再裝了。
@@ -136,6 +185,14 @@ python -m pip install -e .
 ## 第五步：開始使用！（最重要的部分）
 
 ### 🧭 不知道先做哪一個？
+
+先開圖形工作台（推薦新手）：
+
+```
+anti-gambling-trader ui
+```
+
+想沿用命令列分流也可以：
 
 安裝後先執行：
 

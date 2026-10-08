@@ -30,3 +30,7 @@ Thumbs.db
 
 # 驗證工具的除錯輸出
 .playwright-mcp/
+
+# 本機 UI 自動驗收就緒檔（工作階段資訊，不需提交）
+ui-ready.json
+*.ui-ready.json
