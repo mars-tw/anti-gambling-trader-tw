@@ -15,7 +15,7 @@ description: "反詐投資王完整使用流程：怎麼選入口、記錄交易
 > `fit-check` 評估的是「目前這份完整交易紀錄支持哪個階段」，不是人格測驗、
 > 財力審查或未來獲利保證。工具永遠不會認證你適合重押、借錢或全職交易。
 
-0.3.0 的新手預設入口是本機圖形工作台：
+0.4.0 的新手預設入口是本機圖形工作台：
 
 ```bash
 anti-gambling-trader ui                 # 選瀏覽器或桌面視窗
@@ -31,13 +31,34 @@ anti-gambling-trader ui --mode desktop  # 先 pip install -e ".[desktop,excel]"�
 正常完成或正常結束會清理這些暫存，但非預期失敗或強制停止可能讓系統暫存檔留在本機。
 要保留的紀錄與報告請主動下載；下載檔是明確建立的持久副本。下載目前紀錄 CSV 後，重新
 啟動工作台可在「載入先前逐筆紀錄」重新載入，繼續之前的紀錄。關閉瀏覽器分頁不會自動
-停止服務，請使用畫面內的「結束本次使用」或 `Ctrl+C`。它不收券商憑證，也不實作真實下單。
+停止服務，請使用畫面內的「結束本次使用」或 `Ctrl+C`。它只在「API 資料」頁接受使用者本人
+直接輸入的唯讀憑證，預設僅存本次程式記憶體；不實作下單、改單、撤單或實盤解鎖。
+Shioaji 工作程序會在本人可讀的專用暫存目錄執行，並把 SDK 登入權杖／合約快取與日誌
+路徑隔離到該目錄（日誌預設丟棄）；工作程序正常結束後回收暫存。非預期停止可能留下
+暫存目錄，請在確認沒有相關工作程序後再清理。
+
+### 唯讀 API 資料頁的邊界
+
+- Pionex、Binance 只支援現貨；公開 K 線不用憑證。私有成交與帳戶摘要才需要本機憑證。
+- Shioaji 支援台股／期貨的 K 線、持倉／餘額與已實現損益讀取；原始碼安裝需
+  `pip install -e ".[data-api]"`，固定 `shioaji==1.7.7`。第一次帳戶與 API 申請由使用者自行完成。
+- provider、官方主機、路徑、HTTP 方法與 Header 都是程式固定白名單；畫面不接受 URL、host、
+  任意 credential reference 或自訂 Header。key／secret 不進網址、日誌、狀態、錯誤與下載。
+- profile 只接受本工具 `AntiGamblingTrader/readonly/{provider}/{profile}` 命名空間；預設
+  `default`。未勾「記住」時為 session-only；Windows Credential Manager 必須明確勾選。
+- 成功登入或成功讀取只標示「讀取可用」，不代表交易所／券商已授予全部唯讀權限。
+- 每次工作上限 45 秒、20 頁、5,000 列與 4MiB。K 線畫面只顯示最新 400 根，但下載保留
+  全部受限資料；空視窗只代表沒有回傳紀錄，不能推成帳戶沒有其他交易。
+- 加密貨幣的 FIFO 只在期初庫存為 0、轉帳已對帳、邊界完整、費用資產可解讀且同毫秒順序
+  不含糊時建立完整週期。Shioaji 的 gross／net 與費用／交易稅口徑必須由使用者確認。
+- 帳戶頁只顯示原始幣別餘額、持倉數量與單位；不把 USDT 現金或未知成本持倉猜成總淨值。
 
 ## 1. 先選你手上的素材
 
 | 你現在有什麼 | 先執行 | 會得到什麼 |
 |---|---|---|
-| 想用圖形流程 | `anti-gambling-trader ui` | 選瀏覽器／桌面，依五步完成示範、紀錄、分析、下載與紙上鷹架 |
+| 想用圖形流程 | `anti-gambling-trader ui` | 選瀏覽器／桌面，依既有五步完成示範、紀錄、分析、下載與紙上鷹架；需要時另開「API 資料」 |
+| 公開 K 線或本人唯讀 API 資料 | 圖形工作台「API 資料」 | Pionex／Binance／Shioaji 的來源綁定資料集、原始表格與可選已平倉分析 |
 | 不知道從哪開始 | `anti-gambling-trader start` | 依素材顯示最短路徑 |
 | 一筆剛平倉的交易 | `anti-gambling-trader record` | 五個短問題，安全附加到 CSV |
 | 完整、連續交易紀錄 | `anti-gambling-trader fit-check my_trades.csv` | 停手／紙上模擬／極小額驗證分流 |
@@ -49,7 +70,7 @@ anti-gambling-trader ui --mode desktop  # 先 pip install -e ".[desktop,excel]"�
 
 核心分析、文字掃描與 OCR 都可由本機 CLI 執行；圖片 OCR 是選配功能，不安裝也可用
 `scan-screenshot --text "已複製的 OCR 文字"`。若把檔案或輸出交給雲端 AI，請先遮蔽
-姓名、帳號、LINE ID；生成的專案圖表可能載入外部 CDN，但 0.3.0 工作台證據圖表與
+姓名、帳號、LINE ID；生成的專案圖表可能載入外部 CDN，但 0.4.0 工作台證據圖表與
 匯出 SVG 完全本機、沒有 CDN。券商/API 路徑會明確對外連線。
 
 ## 2. 「是否適合交易」到底怎麼判斷
@@ -231,7 +252,7 @@ anti-gambling-trader scan-screenshot --text "手機複製出的圖片文字"
 
 圖形工作台產生的 ZIP 與一般 CLI 進階腳架要分清楚：GUI 只產生固定
 `broker=paper`、`stage=None`、live flags 為 false 的學習鷹架，而且**不會執行它**。
-它沒有金鑰欄、券商連線或 live unlock；分析結果即使到
+紙上專案產生器沒有金鑰欄、券商連線或 live unlock；「API 資料」頁的唯讀憑證不會被帶進 ZIP。分析結果即使到
 `tiny_live_validation` 也不改變這條邊界。
 
 `scaffold` 產出的專案預設使用 `PaperBroker`。即使使用真實券商範本，也必須同時滿足：

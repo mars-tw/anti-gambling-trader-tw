@@ -99,6 +99,7 @@
   }
 
   function clearSensitiveWorkspace() {
+    document.dispatchEvent(new CustomEvent("ui:session-close"));
     currentState = null;
     currentAnalysisId = null;
     currentAnalysisRevision = null;
@@ -292,6 +293,7 @@
 
   function selectSection(name, focus = false) {
     byId("workspace").classList.toggle("results-mode", name === "results");
+    byId("workspace").classList.toggle("api-data-mode", name === "api-data");
     document.querySelectorAll("[data-panel]").forEach((section) => {
       section.hidden = section.dataset.panel !== name;
     });
@@ -302,6 +304,7 @@
       else button.removeAttribute("aria-current");
     });
     if (focus) byId("workspace").focus({ preventScroll: true });
+    document.dispatchEvent(new CustomEvent("ui:section-change", { detail: { section: name } }));
     const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
   }
@@ -686,6 +689,10 @@
     const sourceText = result.source ? `來源：${result.source}` : "來源未標示";
     if (analysis.origin === "demo") {
       setText(byId("origin-banner"), `內建示範資料｜${sourceText}｜這不是你的績效`);
+    } else if (analysis.origin === "api") {
+      const provenance = analysis.api_provenance || {};
+      const provider = provenance.provider ? String(provenance.provider).toUpperCase() : "API";
+      setText(byId("origin-banner"), `${provider} 唯讀 API 資料｜${sourceText}｜只綁定這一版資料集，不代表權限完整或策略有效`);
     } else if (analysis.origin === "manual") {
       setText(byId("origin-banner"), `本次手動紀錄｜${sourceText}｜分析可能使用本機暫存檔；正常完成或結束會清理`);
     } else {
@@ -814,6 +821,7 @@
     }
     if (state.busy) showNotice("本機正在處理一項工作；狀態仍可查看，其他操作請稍候。");
     updateControls();
+    document.dispatchEvent(new CustomEvent("ui:state", { detail: { state } }));
   }
 
   async function refreshState(options = {}) {
@@ -1249,6 +1257,30 @@
       showError(error && error.message ? error.message : "無法連線到本機工作階段。");
     }
   }
+
+  window.AntiGamblingUI = Object.freeze({
+    api,
+    post,
+    downloadArtifact,
+    selectSection,
+    showNotice,
+    showError,
+    applyAnalysis(analysis) {
+      if (currentState) currentState.analysis = analysis;
+      localResultInvalidated = false;
+      renderAnalysis(analysis);
+      selectSection("results", true);
+    },
+    invalidateAnalysis(reason) {
+      invalidateLocalResult(reason || "API 資料已更新；舊分析不再適用。");
+    },
+    getState() {
+      return currentState;
+    },
+    get sessionClosed() {
+      return sessionClosed;
+    },
+  });
 
   initialize();
 })();

@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/app.css">
   <script src="/charts.js" defer></script>
   <script src="/app.js" defer></script>
+  <script src="/api-data.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#workspace">跳到主要內容</a>
@@ -28,6 +29,9 @@
         </button>
         <button class="nav-button" type="button" data-section="records" aria-controls="section-records">
           <span>02</span>交易紀錄
+        </button>
+        <button class="nav-button" type="button" data-section="api-data" aria-controls="section-api-data">
+          <span>02A</span>API 資料
         </button>
         <button class="nav-button" type="button" data-section="results" aria-controls="section-results">
           <span>03</span>分析結果
@@ -52,7 +56,7 @@
     <main id="workspace" class="workspace" tabindex="-1">
       <header class="topline">
         <div>
-          <p class="eyebrow">LOCAL BEGINNER WORKSPACE · 0.3</p>
+          <p class="eyebrow">LOCAL BEGINNER WORKSPACE · 0.4</p>
           <h1>把紀錄攤開，<br>讓證據自己說話。</h1>
         </div>
         <div class="local-note">
@@ -103,7 +107,7 @@
 
         <div class="amber-note">
           <strong>真實下單：未提供</strong>
-          <p>即使核心分析顯示「極小額驗證」，這個新手工作台也不會連券商、不收金鑰、不送單。</p>
+          <p>工作台只在你主動操作時連線讀取資料；不提供下單、改單、撤單或實盤解鎖。</p>
         </div>
       </section>
 
@@ -219,6 +223,165 @@
           </div>
           <p id="empty-records" class="empty-state">還沒有手動紀錄。新增後可隨時移除誤填的一筆。</p>
         </div>
+      </section>
+
+      <section id="section-api-data" class="panel-section api-data-section" data-panel="api-data" hidden>
+        <div class="section-kicker">02A · 資料讀取</div>
+        <div class="section-heading">
+          <div>
+            <h2>API 資料</h2>
+            <p>讀取 Pionex、Binance 現貨公開 K 線，或由你在本機設定唯讀憑證後讀取成交、帳戶與 Shioaji 資料。</p>
+          </div>
+          <p class="margin-note">這裡只有讀取與研究。連線成功只代表該次讀取可用，不證明帳戶權限完整，更不會送單。</p>
+        </div>
+
+        <div class="api-safety-strip" role="note">
+          <strong>READ ONLY</strong>
+          <span>固定官方主機 · 不接受自訂 URL／Header · 金鑰不進網址、下載、狀態或錯誤訊息</span>
+        </div>
+
+        <div class="api-data-grid">
+          <form id="data-sync-form" class="ledger-form api-query-card" novalidate>
+            <fieldset>
+              <legend>讀取行情與交易資料</legend>
+              <div class="field-grid">
+                <label>資料來源
+                  <select id="data-provider" name="provider">
+                    <option value="pionex">Pionex 現貨</option>
+                    <option value="binance" selected>Binance 現貨</option>
+                    <option value="shioaji">Shioaji 台股／期貨</option>
+                  </select>
+                </label>
+                <label>資料種類
+                  <select id="data-kind" name="kind">
+                    <option value="candles">K 線</option>
+                    <option value="fills">成交／已實現明細</option>
+                    <option value="account">唯讀帳戶摘要</option>
+                  </select>
+                </label>
+                <label>市場
+                  <select id="data-market" name="market">
+                    <option value="spot">現貨</option>
+                    <option value="stock">台股</option>
+                    <option value="futures">台灣期貨</option>
+                  </select>
+                </label>
+                <label>標的代號
+                  <input id="data-symbol" name="symbol" value="BTCUSDT" maxlength="32" autocomplete="off" spellcheck="false">
+                </label>
+                <label>K 線週期
+                  <select id="data-interval" name="interval">
+                    <option value="1m">1 分鐘</option><option value="5m">5 分鐘</option>
+                    <option value="15m">15 分鐘</option><option value="30m">30 分鐘</option>
+                    <option value="1h" selected>1 小時</option><option value="4h">4 小時</option>
+                    <option value="1d">1 日</option>
+                  </select>
+                </label>
+                <label>筆數上限
+                  <input id="data-limit" name="limit" type="number" min="1" max="5000" step="1" value="500" required>
+                </label>
+                  <label>開始時間（選填，電腦本機時間／實際時區）
+                  <input id="data-start" name="start_ms" type="datetime-local">
+                </label>
+                  <label>結束時間（選填，電腦本機時間／實際時區）
+                  <input id="data-end" name="end_ms" type="datetime-local">
+                </label>
+                <label class="wide-field">Shioaji 帳戶（需要時由帳戶摘要帶入）
+                  <select id="data-account-ref" name="account_ref"><option value="">只有一個符合帳戶時自動選擇</option></select>
+                </label>
+              </div>
+              <p id="data-query-hint" class="field-hint">公開 K 線不需要金鑰；留空起訖時間時由程式建立固定、有界的近期視窗。</p>
+              <p id="data-sdk-hint" class="field-hint" hidden></p>
+              <div class="api-action-row">
+                <button id="data-sync" class="primary-button" type="submit">讀取資料</button>
+                <button id="data-cancel" class="quiet-button" type="button" hidden>取消讀取</button>
+                <progress id="data-progress" max="100" value="0" hidden aria-label="API 資料讀取進度"></progress>
+              </div>
+              <p id="data-job-status" class="api-inline-status" role="status" aria-live="polite">尚未讀取。</p>
+              <p id="data-refresh-status" class="field-hint">公開 K 線在本頁停留時每 30 秒刷新；離開、錯誤、取消或結束即停止，且不重疊請求。</p>
+            </fieldset>
+          </form>
+
+          <details id="data-credentials-panel" class="api-credential-card api-credential-panel">
+            <summary>私有資料或 Shioaji：設定本機唯讀憑證</summary>
+            <form id="data-credentials-form" class="ledger-form" autocomplete="off" novalidate>
+              <fieldset>
+                <legend>本機唯讀憑證</legend>
+                <div class="field-grid">
+                  <label>資料來源（跟隨上方資料來源）
+                    <select id="credential-provider" name="provider" disabled>
+                      <option value="pionex">Pionex 現貨</option>
+                      <option value="binance">Binance 現貨</option>
+                      <option value="shioaji">Shioaji 台股／期貨</option>
+                    </select>
+                  </label>
+                  <label>連線名稱（進階）
+                    <input id="credential-profile" name="profile" value="default" pattern="[a-z0-9][a-z0-9_-]{0,31}" maxlength="32" autocomplete="off" required>
+                  </label>
+                  <label>API Key
+                    <input id="credential-key" name="api_key" type="password" maxlength="512" autocomplete="off" spellcheck="false">
+                  </label>
+                  <label>API Secret
+                    <input id="credential-secret" name="api_secret" type="password" maxlength="512" autocomplete="off" spellcheck="false">
+                  </label>
+                </div>
+                <label class="check-row"><input id="credential-use-saved" name="use_saved" type="checkbox">使用已儲存的本機憑證</label>
+                <label class="check-row"><input id="credential-remember" name="remember" type="checkbox">記住在 Windows 憑證管理員</label>
+                <p class="field-hint">未勾「記住」時只留在本次程式記憶體；結束工作階段會清除參照。Windows 可攜版已隨附 Shioaji 1.7.7 SDK；從原始碼執行且未偵測到 SDK 時才需要安裝相容版本。</p>
+                <button class="primary-button" type="submit">設定本次唯讀憑證</button>
+                <p id="credential-status" class="api-inline-status" role="status" aria-live="polite">尚未設定；公開加密 K 線不需要憑證。</p>
+              </fieldset>
+            </form>
+          </details>
+        </div>
+
+        <section id="data-result" class="api-result" aria-labelledby="data-result-title" hidden>
+          <div class="api-result-heading">
+            <div><p class="label">本次資料集</p><h3 id="data-result-title">唯讀資料集</h3></div>
+            <span id="data-completion" class="status-pill"></span>
+          </div>
+          <dl id="data-facts" class="fact-list api-facts"></dl>
+          <ul id="data-coverage-reasons" class="warning-list"></ul>
+
+          <article id="data-chart-card" class="api-chart-card" hidden>
+            <div class="chart-title"><h4>行情／成交價格與方向</h4><span id="data-chart-unit" class="unit-label"></span></div>
+            <div id="data-candle-chart" class="api-candle-chart" role="img" aria-label="唯讀 K 線圖"></div>
+            <div class="api-chart-legend" aria-label="圖例"><span class="legend-up">上漲</span><span class="legend-down">下跌</span><span class="legend-sma10">SMA 10</span><span class="legend-sma20">SMA 20</span><span class="legend-buy" hidden>BUY</span><span class="legend-sell" hidden>SELL</span></div>
+            <p id="data-chart-note" class="chart-summary"></p>
+          </article>
+
+          <article id="data-account-card" class="api-account-card" hidden>
+            <div class="chart-title"><h4>唯讀帳戶摘要</h4><span class="unit-label">不推估總淨值</span></div>
+            <div id="data-account-groups" class="api-account-groups"></div>
+          </article>
+
+          <article class="api-raw-card">
+            <div class="ledger-toolbar">
+              <div><p class="label">原始資料</p><h4>原始標準化資料</h4></div>
+              <div class="button-row"><button id="data-export-json" class="quiet-button" type="button">下載 JSON</button><button id="data-export-csv" class="quiet-button" type="button">下載完整 CSV</button></div>
+            </div>
+            <p id="data-table-note" class="field-hint"></p>
+            <div class="table-scroll" tabindex="0" aria-label="API 原始資料表，可水平捲動"><table id="data-table"><thead id="data-table-head"></thead><tbody id="data-table-body"></tbody></table></div>
+          </article>
+
+          <article id="data-analysis-card" class="api-analysis-card" hidden>
+            <p class="label">已平倉交易</p>
+            <h4>分析已平倉交易</h4>
+            <p>先下載或檢查上方原始資料。下列確認是統計推論的必要前提，不會改變券商原始列。</p>
+            <div id="crypto-analysis-confirmations" class="api-confirmations">
+              <label class="check-row"><input id="data-opening-zero" type="checkbox">確認選定期間開始前，此標的庫存為 0</label>
+              <label class="check-row"><input id="data-transfers-reconciled" type="checkbox">確認期間內轉入／轉出與外部庫存已完整對帳</label>
+            </div>
+            <div id="shioaji-analysis-confirmations" class="api-confirmations" hidden>
+              <label>Shioaji 已實現損益口徑
+                <select id="data-pnl-basis"><option value="unknown" selected>未知（不可分析）</option><option value="gross">毛損益，另扣 fee／tax</option><option value="net">已是淨損益</option></select>
+              </label>
+              <label class="check-row"><input id="data-total-costs" type="checkbox">確認所選期間的手續費與交易稅總額完整</label>
+            </div>
+            <button id="data-analyze" class="primary-button" type="button">分析已平倉交易</button>
+            <p id="data-analysis-status" class="api-inline-status" role="status" aria-live="polite"></p>
+          </article>
+        </section>
       </section>
 
       <section id="section-results" class="panel-section" data-panel="results" hidden>

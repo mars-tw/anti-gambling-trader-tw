@@ -25,6 +25,8 @@ from uuid import uuid4
 import core as _core_pkg
 from core.analyzer import analyze_log, sanitize_json
 from core.antiscam.text_scanner import render_scan, scan_text
+from core.data_api.manager import DataManager
+from core.data_api.transport import DataAPIError
 from core.ingest.loader import load_trades
 from core.montecarlo import (
     SimulationCancelled,
@@ -71,6 +73,7 @@ _EXPORT_SOURCE_LABELS = {
     "demo": "內建示範資料，非本人績效",
     "import": "來源：使用者匯入資料",
     "manual": "來源：使用者手動輸入資料",
+    "api": "來源：使用者主動讀取的唯讀 API 資料",
 }
 _WINDOWS_RESERVED = {
     "CON",
@@ -387,7 +390,11 @@ def _readiness(result: Any) -> list[dict[str, Any]]:
 class UIService:
     """Session-scoped analysis / scan / export / scaffold service."""
 
-    def __init__(self, mode: str = "browser") -> None:
+    def __init__(
+        self,
+        mode: str = "browser",
+        data_manager: DataManager | None = None,
+    ) -> None:
         self._mode = str(mode or "browser")
         self._state_lock = threading.RLock()
         # Heavy analysis and every mutation share one non-blocking gate.  The
@@ -408,6 +415,7 @@ class UIService:
         self._artifacts: dict[str, Artifact] = {}
         self._artifact_bytes = 0
         self._tmpdir = tempfile.TemporaryDirectory(prefix="ui_svc_")
+        self._data_manager = data_manager or DataManager()
         self._sample_digests: dict[str, str] = {}
         self._load_sample_digests()
 
@@ -420,6 +428,10 @@ class UIService:
                     return
                 cancel = self._risk_cancel
                 worker = self._risk_thread
+            # The API manager owns its worker (and, for Shioaji, the provider
+            # owns its child process).  Cancel and join that lane before
+            # waiting on the shared operation gate.
+            self._data_manager.close()
             # Cooperative cancellation is signalled before waiting for either
             # the worker or the single-operation gate.
             if cancel is not None:
@@ -463,6 +475,11 @@ class UIService:
     # -- state -------------------------------------------------------------
 
     def state(self) -> dict[str, Any]:
+        # Never hold the service state lock while taking the manager lock.
+        # The manager's completion callback takes these locks in the opposite
+        # temporal order (manager commit, then service state), so this snapshot
+        # order prevents a lock inversion.
+        data_api = self._data_manager.snapshot()
         with self._state_lock:
             return _finite(
                 {
@@ -477,6 +494,7 @@ class UIService:
                     "risk_simulation": self._public_risk_job_locked(
                         include_result=False
                     ),
+                    "data_api": data_api,
                     "busy": self._busy,
                 }
             )
@@ -518,6 +536,206 @@ class UIService:
         self._risk_cancel = None
         if self._risk_thread is not None and not self._risk_thread.is_alive():
             self._risk_thread = None
+
+    def _clear_artifacts_locked(self) -> None:
+        self._artifacts.clear()
+        self._artifact_bytes = 0
+
+    # -- read-only API data -----------------------------------------------
+
+    @staticmethod
+    def _data_ui_error(exc: BaseException, *, fallback_status: int = 422) -> UIError:
+        code = getattr(exc, "code", None)
+        messages = {
+            "auth": "憑證缺少、無效，或唯讀資料權限尚未通過",
+            "source_restricted": "公開行情查詢受到資料來源限制（HTTP 403），不需要輸入私有憑證。",
+            "rate_limit": "資料來源目前限制請求頻率，請稍後再試",
+            "timeout": "唯讀資料請求超過 45 秒期限",
+            "network": "無法連線到固定的資料來源",
+            "invalid_response": "資料來源回應或輸入格式無法安全採用",
+            "oversize": "資料超過本機工作階段的 4MiB 上限",
+            "cancelled": "唯讀資料工作已取消",
+        }
+        status = getattr(exc, "status", None)
+        if isinstance(status, bool) or not isinstance(status, int):
+            status = fallback_status
+        if status not in {400, 403, 404, 409, 413, 422, 500}:
+            status = fallback_status
+        return UIError(messages.get(code, messages["invalid_response"]), status=status)
+
+    def data_credentials(
+        self,
+        *,
+        provider: Any,
+        profile: Any,
+        api_key: Any,
+        api_secret: Any,
+        remember: Any,
+        use_saved: Any,
+    ) -> dict[str, Any]:
+        with self._operation(invalidate_analysis=True):
+            try:
+                with self._state_lock:
+                    self._clear_artifacts_locked()
+                return _finite(
+                    self._data_manager.configure_credentials(
+                        provider=provider,
+                        profile=profile,
+                        api_key=api_key,
+                        api_secret=api_secret,
+                        remember=remember,
+                        use_saved=use_saved,
+                    )
+                )
+            except UIError:
+                raise
+            except Exception as exc:
+                raise self._data_ui_error(exc) from None
+
+    def _finish_data_job(self) -> None:
+        # DataManager invokes this only after its terminal state is committed
+        # and after releasing its own lock.
+        with self._state_lock:
+            self._busy = False
+            self._operation_lock.release()
+
+    def data_start(
+        self,
+        *,
+        provider: Any,
+        kind: Any,
+        query: Any,
+        profile: Any = "default",
+    ) -> dict[str, Any]:
+        if not self._operation_lock.acquire(blocking=False):
+            raise UIError("服務忙碌中，請稍後再試", status=409)
+        try:
+            with self._state_lock:
+                if self._closed:
+                    raise UIError("本次使用已結束", status=409)
+                self._busy = True
+                self._invalidate_analysis_locked()
+                self._clear_artifacts_locked()
+            # Manager validation and its own lock are intentionally outside
+            # the state lock.  Once start succeeds, the completion callback
+            # owns release of the shared operation gate.
+            return _finite(
+                self._data_manager.start(
+                    provider=provider,
+                    kind=kind,
+                    query=query,
+                    profile=profile,
+                    on_finish=self._finish_data_job,
+                )
+            )
+        except UIError:
+            with self._state_lock:
+                self._busy = False
+            self._operation_lock.release()
+            raise
+        except Exception as exc:
+            with self._state_lock:
+                self._busy = False
+            self._operation_lock.release()
+            raise self._data_ui_error(exc, fallback_status=400) from None
+
+    def data_status(self, job_id: Any) -> dict[str, Any]:
+        try:
+            return _finite(self._data_manager.status(job_id))
+        except Exception as exc:
+            raise self._data_ui_error(exc, fallback_status=404) from None
+
+    def data_cancel(self, job_id: Any) -> dict[str, Any]:
+        try:
+            return _finite(self._data_manager.cancel(job_id))
+        except Exception as exc:
+            raise self._data_ui_error(exc, fallback_status=404) from None
+
+    @staticmethod
+    def _public_normalization(value: dict[str, Any]) -> dict[str, Any]:
+        public = {key: item for key, item in value.items() if key != "log"}
+        public["log_available"] = value.get("log") is not None
+        return _finite(public)
+
+    def data_analyze(
+        self,
+        *,
+        job_id: Any,
+        opening_zero_confirmed: Any,
+        transfers_reconciled: Any,
+        pnl_basis: Any,
+        total_costs_confirmed: Any,
+    ) -> dict[str, Any]:
+        with self._operation(invalidate_analysis=True):
+            try:
+                normalized = self._data_manager.analyze(
+                    job_id,
+                    opening_zero_confirmed=opening_zero_confirmed,
+                    transfers_reconciled=transfers_reconciled,
+                    pnl_basis=pnl_basis,
+                    total_costs_confirmed=total_costs_confirmed,
+                )
+                if not isinstance(normalized, dict):
+                    raise DataAPIError("invalid_response", status=422)
+                public_normalization = self._public_normalization(normalized)
+                log = normalized.get("log")
+                if normalized.get("available") is not True or log is None:
+                    return {
+                        "available": False,
+                        "normalization": public_normalization,
+                    }
+
+                status = self._data_manager.status(job_id)
+                dataset = status.get("result")
+                if not isinstance(dataset, dict):
+                    raise DataAPIError("invalid_response", status=409)
+                requested = dataset.get("requested")
+                requested = requested if isinstance(requested, dict) else {}
+                provider = str(dataset.get("provider") or "")
+                kind = str(dataset.get("kind") or "")
+                symbol = str(dataset.get("symbol") or "")
+                log.source = f"{provider} {kind} {symbol}".strip()
+                api_provenance = {
+                    "source_bound_dataset_id": f"{status['job_id']}:{status['revision']}",
+                    "provider": provider,
+                    "kind": kind,
+                    "period": {
+                        "start_ms": requested.get("start_ms"),
+                        "end_ms": requested.get("end_ms"),
+                    },
+                    "fees_basis": (
+                        str(pnl_basis)
+                        if provider == "shioaji"
+                        else "API 成交費用欄位；第三資產費用或未釐清週期不推算"
+                    ),
+                }
+                result = analyze_log(log, framework="generic", n_bootstrap=5000)
+                analysis = self._store_analysis(
+                    result,
+                    origin="api",
+                    api_provenance=api_provenance,
+                )
+                return {
+                    "available": True,
+                    "normalization": public_normalization,
+                    "analysis": analysis,
+                }
+            except UIError:
+                raise
+            except Exception as exc:
+                raise self._data_ui_error(exc) from None
+
+    def data_export(self, job_id: Any, format: Any) -> Artifact:
+        with self._operation():
+            try:
+                filename, media_type, content = self._data_manager.export(
+                    job_id, format=format
+                )
+                return self._put_artifact(filename, media_type, content)
+            except UIError:
+                raise
+            except Exception as exc:
+                raise self._data_ui_error(exc) from None
 
     # -- samples / upload --------------------------------------------------
 
@@ -1080,7 +1298,13 @@ class UIService:
 
     # -- analysis store ----------------------------------------------------
 
-    def _store_analysis(self, result: Any, *, origin: str) -> dict[str, Any]:
+    def _store_analysis(
+        self,
+        result: Any,
+        *,
+        origin: str,
+        api_provenance: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         with self._state_lock:
             self._analysis_revision += 1
             analysis_id = _new_id()
@@ -1093,6 +1317,10 @@ class UIService:
                 "demo": origin == "demo",
                 "source": str(getattr(result.log, "source", "") or ""),
             }
+            if origin == "api":
+                if not isinstance(api_provenance, dict):
+                    raise UIError("API 分析缺少資料集來源綁定", status=500)
+                visuals["provenance"]["api"] = dict(api_provenance)
             payload = {
                 "id": analysis_id,
                 "revision": revision,
@@ -1104,6 +1332,8 @@ class UIService:
                 "visuals": visuals,
                 "can_live": False,
             }
+            if origin == "api":
+                payload["api_provenance"] = dict(api_provenance or {})
             payload = _finite(payload)
             self._analysis = payload
             self._analysis_result = result
@@ -1137,12 +1367,18 @@ class UIService:
             raise UIError("分析識別資料無效", status=500)
         if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
             raise UIError("分析版本資料無效", status=500)
-        return {
+        provenance = {
             "origin": origin,
             "demo": origin == "demo",
             "analysis_id": analysis_id,
             "revision": revision,
         }
+        if origin == "api":
+            api = analysis.get("api_provenance")
+            if not isinstance(api, dict):
+                raise UIError("API 分析來源綁定無效", status=500)
+            provenance["api"] = dict(api)
+        return provenance
 
     # -- asynchronous capital-risk scenario -------------------------------
 

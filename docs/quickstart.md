@@ -17,8 +17,8 @@ description: "Windows 可攜版三步驟即可開啟本機圖形工作台；也�
 
 不想先安裝 Python？Windows 10/11 x64 可以直接使用可攜版：
 
-1. 從 [v0.3.0 發行頁](https://github.com/mars-tw/anti-gambling-trader-tw/releases/tag/v0.3.0)
-   下載 [AntiGamblingTrader-windows-x64.zip](https://github.com/mars-tw/anti-gambling-trader-tw/releases/download/v0.3.0/AntiGamblingTrader-windows-x64.zip)。
+1. 從 [v0.4.0 發行頁](https://github.com/mars-tw/anti-gambling-trader-tw/releases/tag/v0.4.0)
+   下載 [AntiGamblingTrader-windows-x64.zip](https://github.com/mars-tw/anti-gambling-trader-tw/releases/download/v0.4.0/AntiGamblingTrader-windows-x64.zip)。
 2. 解壓縮**整個資料夾**，不要只把裡面的 exe 單獨拖出來。
 3. 雙擊 `AntiGamblingTrader.exe`，再選擇本機瀏覽器版或獨立應用程式視窗。
 
@@ -51,16 +51,31 @@ Windows 原始碼使用者也可雙擊專案根目錄的 `start-ui.cmd`。它不
 → 下載報告 → 紙上專案」。
 樣本一定標示為示範，不是你的成績。
 
-> 工作台只連本機 `127.0.0.1`。原始匯入檔不會被修改；分析可能使用本機暫存檔。正常完成
+> 工作台介面綁定本機 `127.0.0.1`；「API 資料」頁會依查詢連線固定官方服務做唯讀讀取。原始匯入檔不會被修改；分析可能使用本機暫存檔。正常完成
 > 或正常結束會清理這些暫存，但非預期失敗或強制停止可能讓系統暫存檔留在本機。報告與
 > CSV 只有在你主動下載後才會成為持久副本；下載「目前紀錄 CSV」後，重新啟動工作台可在
 > 「載入先前逐筆紀錄」重新載入，繼續之前的紀錄。只關瀏覽器分頁不等於停止服務，請按
 > 「結束本次使用」或回終端機按 `Ctrl+C`。
 >
-> GUI **不提供實盤**：沒有券商金鑰欄、沒有解鎖、沒有真單。紙上專案 ZIP 固定使用
-> PaperBroker，只是待你填策略的鷹架。
+> GUI **不提供實盤**：「API 資料」頁的憑證只用來讀取本人資料，不會下單、改單或撤單。
+> 預設只留在本次程式記憶體，只有明確勾選才存入 Windows Credential Manager。
+> 紙上專案 ZIP 仍固定使用 PaperBroker，只是待你填策略的鷹架。
 
-### 看懂 0.3.0 的四組證據
+### 第一次使用「API 資料」
+
+1. 只看行情：預設是 Binance，也可在上方「資料來源」改選 Pionex；選 `K 線`、現貨與標的，直接按「讀取資料」；不需金鑰。
+2. 看私有成交或帳戶：先在上方「資料來源」選 provider；本機唯讀憑證來源會跟隨這個選擇，再選「連線名稱（進階）」的 `default`，由你本人直接輸入
+   唯讀 API key／secret。預設不勾「記住」；送出後密碼欄會清空。
+3. Shioaji：Windows 可攜版已固定收錄 1.7.7 SDK；原始碼安裝請先執行
+   `pip install -e ".[data-api]"`。第一次連線前仍要由你自行向永豐完成帳戶、API 與憑證設定。
+4. 成功顯示「讀取可用」只代表該次唯讀查詢成功，不證明所有權限都開通。多個 Shioaji
+   帳戶時先讀帳戶摘要，再明確選擇遮蔽後的帳戶，不會偷偷選第一個。
+
+原始成交表可以先下載。加密貨幣成交要分析成已平倉交易前，必須明確確認期初庫存為 0，
+並完成期間內轉入／轉出對帳；Shioaji 則必須選擇 gross／net 損益口徑並確認費用與交易稅完整。
+未解的部分週期、第三資產費用或同毫秒買賣會保留原始表格，但不會硬猜成淨損益。
+
+### 看懂 0.4.0 的四組證據
 
 匯入完成後，「分析結果」會先保留原本的完整性、核心階段與關鍵數字，接著顯示：
 

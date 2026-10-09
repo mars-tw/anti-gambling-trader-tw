@@ -4,7 +4,7 @@
 
 ## Beginner GUI first (about five minutes after installation)
 
-Version 0.3.0 provides one local UI in two user-selected shells:
+Version 0.4.0 provides one local UI in two user-selected shells:
 
 - **Local browser mode** uses only the Python standard library and opens in your default browser.
 - **Desktop window mode** loads the exact same URL and service in a native WebView window.
@@ -26,10 +26,17 @@ pip install -e ".[desktop,excel]"
 anti-gambling-trader ui --mode desktop
 ```
 
+To read Shioaji Taiwan stock/futures data from a source installation, install the pinned SDK extra:
+
+```bash
+pip install -e ".[data-api]"  # shioaji==1.7.7; public Pionex/Binance candles need no SDK or key
+```
+
 If the desktop renderer is unavailable, use `--mode browser`. Both modes bind only to
 `127.0.0.1` and follow the same beginner flow: try a labeled sample, import or manually record,
 read integrity, the core stage, and evidence charts; optionally run a bounded capital-warning
-scenario with an explicitly supplied starting balance; download a report; then optionally download a paper scaffold.
+scenario with an explicitly supplied starting balance; optionally read public market data or your own
+read-only API data; download a report; then optionally download a paper scaffold.
 Bundled samples are demonstrations, never your results.
 
 Both shells use the same local, dependency-free SVG evidence views: cumulative realized net P&L
@@ -48,12 +55,16 @@ session** in the UI or press `Ctrl+C` in the terminal.
 Automation can use `--no-open --ready-file ui-ready.json`. The ready JSON contains only the
 local URL, PID, mode, instance ID, and ready state—never the session nonce—and an existing file
 is never overwritten. Maintainers can build a Windows onedir bundle and ZIP from an environment
-with the desktop dependencies installed by running
-`python scripts/build_windows_ui.py --output dist`. This is a build instruction, not a claim or
-link to an executable release that has not yet passed portable validation.
+with the desktop, Excel, and data-API dependencies installed by running
+`python scripts/build_windows_ui.py --output dist`. Windows users can download the
+[v0.4.0 portable ZIP](https://github.com/mars-tw/anti-gambling-trader-tw/releases/download/v0.4.0/AntiGamblingTrader-windows-x64.zip)
+from the [v0.4.0 release page](https://github.com/mars-tw/anti-gambling-trader-tw/releases/tag/v0.4.0).
 
-> **Live trading is not provided.** The GUI accepts no broker keys, makes no broker connection,
-> and submits no orders. Even if the analytical core reports `tiny_live_validation`, the GUI
+> **Live trading is not provided.** On the **API Data** page only, the GUI accepts credentials that
+> the user enters directly for read-only data. They are session-only by default and enter Windows
+> Credential Manager only after an explicit checkbox; they never appear in URLs, state, errors, or
+> downloads. The UI reads market/fill/realized/account data and implements no order, amend, or cancel
+> operation. Even if the analytical core reports `tiny_live_validation`, the GUI
 > remains live-disabled. Every generated project is fixed to `PaperBroker`, `stage=None`, and
 > false live flags; it is only a strategy scaffold to complete. The GitHub Pages site contains
 > instructions only—it is not a hosted analysis application and does not accept trade records.
@@ -69,7 +80,7 @@ analyzes trade records locally and does not upload them. If you give files, scre
 to Claude Code or another cloud AI, the content may be transmitted and retained under that provider's
 policy; mask names, account numbers, LINE IDs, and other identifiers first. See the
 [official Claude Code data-usage documentation](https://code.claude.com/docs/en/data-usage).
-Some generated project charts may load an external CDN; the 0.3.0 workbench evidence SVGs and HTML
+Some generated project charts may load an external CDN; the 0.4.0 workbench evidence SVGs, API candles, and HTML
 exports do not. Broker/API paths explicitly connect to their external services.
 
 > A tool that is **honest to the point of being unlikable**. It will not tell you "you will make money" —
