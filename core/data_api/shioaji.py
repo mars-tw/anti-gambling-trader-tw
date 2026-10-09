@@ -165,9 +165,9 @@ def _secure_owned_temp(path: Path) -> bool:
             descriptor_size = wintypes.DWORD(0)
             if not convert_sddl(sddl, 1, ctypes.byref(descriptor), ctypes.byref(descriptor_size)):
                 return False
-            if not set_file_security(str(path), 0x00000004, descriptor):
+            if not set_file_security(str(path), 0x80000004, descriptor):
                 return False
-            return _verify_owned_acl(path, sddl, advapi32, kernel32)
+            return _verify_owned_acl(path, sid_ptr, advapi32, kernel32)
         finally:
             if descriptor:
                 local_free(descriptor)
@@ -178,20 +178,29 @@ def _secure_owned_temp(path: Path) -> bool:
         return False
 
 
-def _verify_owned_acl(path: Path, expected_sddl: str, advapi32: Any, kernel32: Any) -> bool:
-    """Read back the protected DACL and require the one expected allow ACE."""
+def _verify_owned_acl(path: Path, expected_sid: Any, advapi32: Any, kernel32: Any) -> bool:
+    """Read back a protected DACL and require one full-rights ACE for our SID."""
     import ctypes
     from ctypes import wintypes
 
     get_file_security = advapi32.GetFileSecurityW
     get_file_security.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
     get_file_security.restype = wintypes.BOOL
-    convert_security = advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW
-    convert_security.argtypes = [wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(wintypes.LPWSTR), ctypes.POINTER(wintypes.DWORD)]
-    convert_security.restype = wintypes.BOOL
-    local_free = kernel32.LocalFree
-    local_free.argtypes = [wintypes.HLOCAL]
-    local_free.restype = wintypes.HLOCAL
+    get_control = advapi32.GetSecurityDescriptorControl
+    get_control.argtypes = [wintypes.LPVOID, ctypes.POINTER(wintypes.WORD), ctypes.POINTER(wintypes.DWORD)]
+    get_control.restype = wintypes.BOOL
+    get_dacl = advapi32.GetSecurityDescriptorDacl
+    get_dacl.argtypes = [wintypes.LPVOID, ctypes.POINTER(wintypes.BOOL), ctypes.POINTER(wintypes.LPVOID), ctypes.POINTER(wintypes.BOOL)]
+    get_dacl.restype = wintypes.BOOL
+    get_acl_info = advapi32.GetAclInformation
+    get_acl_info.argtypes = [wintypes.LPVOID, wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD]
+    get_acl_info.restype = wintypes.BOOL
+    get_ace = advapi32.GetAce
+    get_ace.argtypes = [wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.LPVOID)]
+    get_ace.restype = wintypes.BOOL
+    equal_sid = advapi32.EqualSid
+    equal_sid.argtypes = [wintypes.LPVOID, wintypes.LPVOID]
+    equal_sid.restype = wintypes.BOOL
     needed = wintypes.DWORD(0)
     get_file_security(str(path), 0x00000004, None, 0, ctypes.byref(needed))
     if not needed.value:
@@ -199,15 +208,43 @@ def _verify_owned_acl(path: Path, expected_sddl: str, advapi32: Any, kernel32: A
     descriptor = ctypes.create_string_buffer(needed.value)
     if not get_file_security(str(path), 0x00000004, descriptor, needed, ctypes.byref(needed)):
         return False
-    rendered = wintypes.LPWSTR()
-    rendered_size = wintypes.DWORD(0)
-    try:
-        if not convert_security(descriptor, 1, 0x00000004, ctypes.byref(rendered), ctypes.byref(rendered_size)):
-            return False
-        return rendered.value.replace(" ", "").upper() == expected_sddl.upper()
-    finally:
-        if rendered:
-            local_free(rendered)
+    control = wintypes.WORD(0)
+    control_revision = wintypes.DWORD(0)
+    if not get_control(descriptor, ctypes.byref(control), ctypes.byref(control_revision)):
+        return False
+    if not (int(control.value) & 0x1000):  # SE_DACL_PROTECTED
+        return False
+    dacl_present = wintypes.BOOL(False)
+    dacl = wintypes.LPVOID()
+    dacl_defaulted = wintypes.BOOL(False)
+    if not get_dacl(descriptor, ctypes.byref(dacl_present), ctypes.byref(dacl), ctypes.byref(dacl_defaulted)):
+        return False
+    if not dacl_present.value or not dacl.value:
+        return False
+
+    class _AclSizeInformation(ctypes.Structure):
+        _fields_ = (("ace_count", wintypes.DWORD), ("acl_bytes_in_use", wintypes.DWORD), ("acl_bytes_free", wintypes.DWORD))
+
+    acl_info = _AclSizeInformation()
+    if not get_acl_info(dacl, ctypes.byref(acl_info), ctypes.sizeof(acl_info), 2):  # AclSizeInformation
+        return False
+    if int(acl_info.ace_count) != 1:
+        return False
+    ace = wintypes.LPVOID()
+    if not get_ace(dacl, 0, ctypes.byref(ace)) or not ace.value:
+        return False
+
+    class _AceHeader(ctypes.Structure):
+        _fields_ = (("ace_type", ctypes.c_ubyte), ("ace_flags", ctypes.c_ubyte), ("ace_size", wintypes.WORD))
+
+    header = ctypes.cast(ace, ctypes.POINTER(_AceHeader)).contents
+    if int(header.ace_type) != 0 or (int(header.ace_flags) & 0x1F) != 0x03:
+        return False
+    mask = ctypes.cast(int(ace.value) + ctypes.sizeof(_AceHeader), ctypes.POINTER(wintypes.DWORD)).contents.value
+    if int(mask) != 0x1F01FF:
+        return False
+    ace_sid = ctypes.c_void_p(int(ace.value) + ctypes.sizeof(_AceHeader) + ctypes.sizeof(wintypes.DWORD))
+    return bool(equal_sid(expected_sid, ace_sid))
 
 
 def _new_owned_temp() -> Path:
