@@ -1052,26 +1052,34 @@ td .remove-button {
 
 /* Results keep the core conclusion above the fold; the generic marketing hero
    collapses only while this panel is active. */
-.workspace.results-mode {
+.workspace.results-mode,
+.workspace.api-data-mode {
   padding-top: 1.4rem;
 }
 
-.workspace.results-mode .topline {
+.workspace.results-mode .topline,
+.workspace.api-data-mode .topline {
   min-height: 0;
   justify-content: flex-end;
   padding-bottom: 0.7rem;
 }
 
-.workspace.results-mode .topline > div:first-child {
+.workspace.results-mode .topline > div:first-child,
+.workspace.api-data-mode .topline > div:first-child {
   display: none;
 }
 
-.workspace.results-mode .local-note {
+.workspace.results-mode .local-note,
+.workspace.api-data-mode .local-note {
   max-width: 30rem;
   padding-top: 0;
 }
 
 #section-results {
+  padding-top: 1.35rem;
+}
+
+#section-api-data {
   padding-top: 1.35rem;
 }
 
@@ -1576,7 +1584,8 @@ td .remove-button {
     grid-template-columns: 1fr;
   }
 
-  .workspace.results-mode .local-note {
+  .workspace.results-mode .local-note,
+  .workspace.api-data-mode .local-note {
     margin-top: 0;
   }
 
@@ -1644,5 +1653,383 @@ td .remove-button {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+}
+
+/* Read-only API data workspace ------------------------------------------ */
+
+.api-data-section {
+  --api-grid: rgba(20, 125, 120, 0.13);
+}
+
+.api-safety-strip {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin: -0.7rem 0 1.3rem;
+  padding: 0.8rem 1rem;
+  border-block: 1px solid var(--teal-dark);
+  background:
+    repeating-linear-gradient(90deg, transparent 0 23px, var(--api-grid) 23px 24px),
+    var(--teal-pale);
+  color: var(--teal-dark);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.api-safety-strip strong {
+  flex: 0 0 auto;
+  padding: 0.2rem 0.45rem;
+  background: var(--teal-dark);
+  color: var(--white);
+  font-family: Georgia, serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+}
+
+.api-data-grid {
+  display: grid;
+  grid-template-columns: minmax(18rem, 0.82fr) minmax(27rem, 1.18fr);
+  gap: 1.3rem;
+  align-items: start;
+}
+
+.api-credential-card,
+.api-query-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.api-credential-card::before,
+.api-query-card::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  background: var(--teal);
+  content: "";
+}
+
+.api-credential-panel {
+  border: 1px solid var(--line);
+  background: rgba(255, 253, 248, 0.68);
+  box-shadow: var(--shadow);
+}
+
+.api-credential-panel > summary {
+  display: block;
+  padding: 1rem 1.35rem 1rem 1.55rem;
+  cursor: pointer;
+  color: var(--teal-dark);
+  font-family: var(--serif);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.api-credential-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.api-credential-panel > summary::before {
+  display: inline-block;
+  width: 1rem;
+  margin-right: 0.35rem;
+  content: "＋";
+}
+
+.api-credential-panel[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.api-credential-panel[open] > summary::before {
+  content: "−";
+}
+
+.api-credential-panel .ledger-form {
+  box-shadow: none;
+}
+
+.api-credential-panel .ledger-form fieldset {
+  border: 0;
+}
+
+.check-row {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  margin-top: 0.8rem;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.check-row input {
+  flex: 0 0 auto;
+  width: 1rem;
+  min-height: 1rem;
+  margin-top: 0.1rem;
+  accent-color: var(--teal-dark);
+}
+
+.api-inline-status {
+  min-height: 1.5rem;
+  margin: 0.8rem 0 0;
+  padding-left: 0.7rem;
+  border-left: 2px solid var(--teal);
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.api-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.api-action-row .primary-button,
+.api-action-row .quiet-button {
+  margin-top: 0;
+}
+
+.api-action-row progress {
+  flex: 1 1 9rem;
+  height: 0.45rem;
+  border: 0;
+  accent-color: var(--teal);
+}
+
+.api-result {
+  margin-top: 1.5rem;
+  padding: clamp(1rem, 2.5vw, 1.65rem);
+  border: 1px solid var(--ink);
+  background:
+    linear-gradient(var(--api-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--api-grid) 1px, transparent 1px),
+    rgba(255, 253, 248, 0.82);
+  background-size: 28px 28px, 28px 28px, auto;
+  box-shadow: var(--shadow);
+}
+
+.api-result-heading {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--ink);
+}
+
+.api-result-heading h3,
+.api-raw-card h4,
+.api-analysis-card h4 {
+  margin: 0.2rem 0 0;
+  font-family: var(--serif);
+  font-size: clamp(1.25rem, 2vw, 1.7rem);
+}
+
+.api-facts {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  background: rgba(251, 248, 240, 0.82);
+}
+
+.api-chart-card,
+.api-account-card,
+.api-raw-card,
+.api-analysis-card {
+  margin-top: 1.2rem;
+  padding: 1.1rem;
+  border: 1px solid var(--line-dark);
+  background: rgba(251, 248, 240, 0.93);
+}
+
+.api-candle-chart {
+  min-height: 18rem;
+  margin-top: 0.9rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #142033;
+}
+
+.api-candle-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 20rem;
+}
+
+.api-grid-line {
+  stroke: rgba(229, 236, 232, 0.14);
+  stroke-width: 1;
+}
+
+.api-axis-label {
+  fill: #cbd7d2;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+
+.api-candle-up {
+  fill: #50c6ad;
+  stroke: #50c6ad;
+  stroke-width: 1;
+}
+
+.api-candle-down {
+  fill: #ef776d;
+  stroke: #ef776d;
+  stroke-width: 1;
+}
+
+.api-volume-up {
+  fill: rgba(80, 198, 173, 0.34);
+}
+
+.api-volume-down {
+  fill: rgba(239, 119, 109, 0.34);
+}
+
+.api-sma10,
+.api-sma20 {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.api-sma10 {
+  stroke: #f2c56b;
+}
+
+.api-sma20 {
+  stroke: #7fa8ff;
+}
+
+.api-marker-buy,
+.api-marker-sell {
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  font-weight: 800;
+  paint-order: stroke;
+  stroke: #142033;
+  stroke-width: 3px;
+}
+
+.api-marker-buy {
+  fill: #75efd6;
+}
+
+.api-marker-sell {
+  fill: #ff9b91;
+}
+
+.api-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 1rem;
+  margin-top: 0.7rem;
+  color: var(--ink-soft);
+  font-family: Consolas, monospace;
+  font-size: 0.7rem;
+}
+
+.api-chart-legend span::before {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.18rem;
+  margin: 0 0.35rem 0.18rem 0;
+  background: currentColor;
+  content: "";
+}
+
+.legend-up,
+.legend-buy { color: var(--teal-dark); }
+.legend-down,
+.legend-sell { color: var(--red); }
+.legend-sma10 { color: #94620d; }
+.legend-sma20 { color: #315fa8; }
+
+.api-raw-card .ledger-toolbar {
+  margin-bottom: 0.8rem;
+}
+
+.api-raw-card table,
+.api-account-card table {
+  min-width: 52rem;
+  background: var(--white);
+  font-family: Consolas, "Microsoft JhengHei", monospace;
+  font-size: 0.72rem;
+}
+
+.api-account-groups {
+  display: grid;
+  gap: 1rem;
+}
+
+.api-account-groups h5 {
+  margin: 0 0 0.55rem;
+  font-family: var(--serif);
+  font-size: 1rem;
+}
+
+.api-confirmations {
+  display: grid;
+  gap: 0.25rem;
+  margin: 1rem 0;
+  padding: 0.9rem;
+  border-left: 3px solid var(--amber);
+  background: var(--amber-pale);
+}
+
+.api-confirmations > label:not(.check-row) {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+@media (max-width: 1100px) {
+  .api-data-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .api-facts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .api-safety-strip,
+  .api-result-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .api-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .api-candle-chart {
+    min-height: 18rem;
+    margin-inline: -0.65rem;
+  }
+
+  .api-candle-chart svg {
+    height: auto;
+    min-height: 18rem;
+  }
+}
+
+@media (max-width: 390px) {
+  .api-result {
+    padding-inline: 0.65rem;
+  }
+
+  .api-facts {
+    grid-template-columns: 1fr;
   }
 }

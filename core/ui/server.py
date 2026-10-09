@@ -45,6 +45,11 @@ _POST_ROUTES = frozenset(
         "/api/scan",
         "/api/risk-simulation",
         "/api/cancel-risk-simulation",
+        "/api/data-credentials",
+        "/api/data-sync",
+        "/api/data-cancel",
+        "/api/data-analyze",
+        "/api/data-export",
         "/api/export",
         "/api/scaffold",
         "/api/shutdown",
@@ -478,6 +483,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/app.css": ("app.css", "text/css; charset=utf-8"),
             "/charts.js": ("charts.js", "text/javascript; charset=utf-8"),
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+            "/api-data.js": ("api-data.js", "text/javascript; charset=utf-8"),
         }
         item = mapping.get(path)
         if item is None:
@@ -501,7 +507,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             self._require_host()
             path = self._validate_target()
-            if path in {"/", "/app.css", "/charts.js", "/app.js"}:
+            if path in {"/", "/app.css", "/charts.js", "/app.js", "/api-data.js"}:
                 self._mark_input_complete()
             if self._serve_static(path):
                 return
@@ -532,6 +538,15 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(
                     200, self.app.service.risk_simulation_status(job_id)
                 )
+                return
+            data_prefix = "/api/data-job/"
+            if path.startswith(data_prefix):
+                self._require_token()
+                job_id = path[len(data_prefix) :]
+                if not _ARTIFACT_ID.fullmatch(job_id):
+                    raise UIError("找不到指定唯讀資料工作", status=404)
+                self._mark_input_complete()
+                self._send_json(200, self.app.service.data_status(job_id))
                 return
             prefix = "/api/artifact/"
             if path.startswith(prefix):
@@ -676,6 +691,83 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(202 if job.get("status") == "running" else 200, job)
                 return
 
+            if path == "/api/data-credentials":
+                self._exact_fields(
+                    payload,
+                    required={
+                        "provider",
+                        "profile",
+                        "api_key",
+                        "api_secret",
+                        "remember",
+                        "use_saved",
+                    },
+                )
+                self._mark_input_complete()
+                configured = self.app.service.data_credentials(
+                    provider=payload["provider"],
+                    profile=payload["profile"],
+                    api_key=payload["api_key"],
+                    api_secret=payload["api_secret"],
+                    remember=payload["remember"],
+                    use_saved=payload["use_saved"],
+                )
+                self._send_json(200, configured)
+                return
+
+            if path == "/api/data-sync":
+                self._exact_fields(
+                    payload,
+                    required={"provider", "kind", "query", "profile"},
+                )
+                self._mark_input_complete()
+                job = self.app.service.data_start(
+                    provider=payload["provider"],
+                    kind=payload["kind"],
+                    query=payload["query"],
+                    profile=payload["profile"],
+                )
+                self._send_json(202, job)
+                return
+
+            if path == "/api/data-cancel":
+                self._exact_fields(payload, required={"job_id"})
+                self._mark_input_complete()
+                job = self.app.service.data_cancel(payload["job_id"])
+                self._send_json(202 if job.get("status") == "running" else 200, job)
+                return
+
+            if path == "/api/data-analyze":
+                self._exact_fields(
+                    payload,
+                    required={
+                        "job_id",
+                        "opening_zero_confirmed",
+                        "transfers_reconciled",
+                        "pnl_basis",
+                        "total_costs_confirmed",
+                    },
+                )
+                self._mark_input_complete()
+                result = self.app.service.data_analyze(
+                    job_id=payload["job_id"],
+                    opening_zero_confirmed=payload["opening_zero_confirmed"],
+                    transfers_reconciled=payload["transfers_reconciled"],
+                    pnl_basis=payload["pnl_basis"],
+                    total_costs_confirmed=payload["total_costs_confirmed"],
+                )
+                self._send_json(200, result)
+                return
+
+            if path == "/api/data-export":
+                self._exact_fields(payload, required={"job_id", "format"})
+                self._mark_input_complete()
+                artifact = self.app.service.data_export(
+                    payload["job_id"], payload["format"]
+                )
+                self._send_json(200, _artifact_payload(artifact))
+                return
+
             if path == "/api/export":
                 self._exact_fields(
                     payload,
@@ -717,7 +809,7 @@ class _Handler(BaseHTTPRequestHandler):
                 ).start()
                 return
 
-            if path in {"/", "/app.css", "/charts.js", "/app.js", "/api/health", "/api/state"} or path.startswith("/api/artifact/") or path.startswith("/api/risk-simulation/"):
+            if path in {"/", "/app.css", "/charts.js", "/app.js", "/api-data.js", "/api/health", "/api/state"} or path.startswith("/api/artifact/") or path.startswith("/api/risk-simulation/") or path.startswith("/api/data-job/"):
                 self._error(405, "此路徑不支援 POST")
             else:
                 self._error(404, "找不到指定路徑")

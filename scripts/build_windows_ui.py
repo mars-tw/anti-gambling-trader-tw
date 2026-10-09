@@ -30,6 +30,7 @@ _RUNTIME_DISTRIBUTIONS = (
     "openpyxl",
     "et-xmlfile",
     "defusedxml",
+    "shioaji",
 )
 _MAX_LICENSE_FILE_BYTES = 2 * 1024 * 1024
 _REPARSE_POINT_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
@@ -40,7 +41,9 @@ _DELIVERY_README = """反詐投資王 Windows 版
 2. 在 Windows 10/11 x64 雙擊 AntiGamblingTrader.exe，啟動時會先出現模式選擇（choose），可選原生桌面或瀏覽器模式。
 3. 原生桌面模式需要已安裝 WebView2 Runtime；本包不內含 WebView2。若無法使用，請改選瀏覽器模式。
 4. 下載的 CSV 請保留；下次啟動後重新載入即可延續檢視資料。
-5. 本包只做本機分析與紙上／示範用途，不連接或存取真實券商（live broker）。
+5. 「API 資料」只讀取行情、成交、已實現損益或帳戶摘要；不含下單、改單、撤單或實盤解鎖。
+6. Pionex／Binance 公開 K 線不需金鑰。私有資料憑證預設只留在本次程式記憶體；只有使用者明確勾選才存入 Windows Credential Manager。
+7. Shioaji 由本包固定收錄 1.7.7 SDK；第一次連線仍需使用者自行完成永豐帳戶與 API 申請設定。
 
 授權：本專案採 MIT License，詳見同資料夾的 LICENSE。第三方授權見 THIRD_PARTY_LICENSES\\NOTICE.txt。
 """
@@ -369,12 +372,21 @@ def build(output: Path) -> tuple[Path, Path]:
 
     try:
         import PyInstaller.__main__ as pyinstaller
+        import shioaji  # noqa: F401 - verifies the pinned data-api extra
         import webview  # noqa: F401 - verifies the desktop extra is installed
     except Exception as exc:
         raise RuntimeError(
             "Build dependencies are missing. Install the project with "
-            "'.[desktop,excel]' and PyInstaller before running this script."
+            "'.[desktop,excel,data-api]' and PyInstaller before running this script."
         ) from exc
+    try:
+        shioaji_version = importlib.metadata.version("shioaji")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise RuntimeError("The Windows bundle requires shioaji==1.7.7") from exc
+    if shioaji_version != "1.7.7":
+        raise RuntimeError(
+            f"The Windows bundle pins shioaji==1.7.7; found {shioaji_version}"
+        )
 
     root = Path(__file__).resolve().parents[1]
     output = output.expanduser().resolve()
@@ -431,6 +443,13 @@ def build(output: Path) -> tuple[Path, Path]:
         "webview",
         "--collect-all",
         "pythonnet",
+        # Collect the pinned SDK's Python modules, package data and native
+        # binaries.  The frozen entry dispatches the owned read-only worker
+        # before importing the UI chooser.
+        "--collect-all",
+        "shioaji",
+        "--collect-submodules",
+        "core.data_api",
         "--hidden-import",
         "clr_loader",
         "--hidden-import",

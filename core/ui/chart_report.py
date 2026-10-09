@@ -871,6 +871,7 @@ def render_evidence_report(
         "demo": "內建示範資料",
         "import": "使用者匯入資料",
         "manual": "使用者手動輸入資料",
+        "api": "API 唯讀資料",
     }
     origin = origin_labels.get(str(provenance.get("origin") or ""), "來源未辨識")
     provenance_line = f"資料來源：{origin}"
