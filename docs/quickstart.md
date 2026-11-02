@@ -17,8 +17,8 @@ description: "Windows 可攜版三步驟即可開啟本機圖形工作台；也�
 
 不想先安裝 Python？Windows 10/11 x64 可以直接使用可攜版：
 
-1. 從 [v0.4.0 發行頁](https://github.com/mars-tw/anti-gambling-trader-tw/releases/tag/v0.4.0)
-   下載 [AntiGamblingTrader-windows-x64.zip](https://github.com/mars-tw/anti-gambling-trader-tw/releases/download/v0.4.0/AntiGamblingTrader-windows-x64.zip)。
+1. 從 [v0.4.1 發行頁](https://github.com/mars-tw/anti-gambling-trader-tw/releases/tag/v0.4.1)
+   下載 [AntiGamblingTrader-windows-x64.zip](https://github.com/mars-tw/anti-gambling-trader-tw/releases/download/v0.4.1/AntiGamblingTrader-windows-x64.zip)。
 2. 解壓縮**整個資料夾**，不要只把裡面的 exe 單獨拖出來。
 3. 雙擊 `AntiGamblingTrader.exe`，再選擇本機瀏覽器版或獨立應用程式視窗。
 
@@ -75,7 +75,7 @@ Windows 原始碼使用者也可雙擊專案根目錄的 `start-ui.cmd`。它不
 並完成期間內轉入／轉出對帳；Shioaji 則必須選擇 gross／net 損益口徑並確認費用與交易稅完整。
 未解的部分週期、第三資產費用或同毫秒買賣會保留原始表格，但不會硬猜成淨損益。
 
-### 看懂 0.4.0 的四組證據
+### 看懂 0.4.1 的四組證據
 
 匯入完成後，「分析結果」會先保留原本的完整性、核心階段與關鍵數字，接著顯示：
 

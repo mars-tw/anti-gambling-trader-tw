@@ -468,12 +468,27 @@ def gambler_ruin_probability(
         return 1.0
     if a >= N:
         return 0.0
-    if not (0.0 < p_win < 1.0):
-        return 1.0 if p_win == 0.0 else 0.0
-    if abs(p_win - 0.5) < 1e-12:
+    if isinstance(p_win, bool) or not isinstance(p_win, (int, float)):
+        raise ValueError("p_win 必須是介於 0 與 1 的有限數字")
+    p = float(p_win)
+    if not math.isfinite(p) or not 0.0 <= p <= 1.0:
+        raise ValueError("p_win 必須是介於 0 與 1 的有限數字")
+    if p == 0.0:
+        return 1.0
+    if p == 1.0:
+        return 0.0
+    if p == 0.5:
         return 1.0 - a / N
-    r = (1.0 - p_win) / p_win
-    return (r ** a - r ** N) / (1.0 - r ** N)
+    log_r = math.log1p(-p) - math.log(p)
+    if p < 0.5:
+        # Both exponents are non-positive, so expm1 avoids cancellation near
+        # fairness and never constructs the overflowing r ** N term.
+        return math.expm1((a - N) * log_r) / math.expm1(-N * log_r)
+    return (
+        math.exp(a * log_r)
+        * math.expm1((N - a) * log_r)
+        / math.expm1(N * log_r)
+    )
 
 
 def losing_streak_probability(

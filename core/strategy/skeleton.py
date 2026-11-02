@@ -194,6 +194,21 @@ class ReverseEngineeredStrategy(bt.Strategy):
         _safety_gate()
         self.order = None
 
+    def notify_order(self, order):
+        # Backtrader keeps a completed Order object truthy.  Clear only the
+        # currently tracked terminal order; Submitted/Accepted/Partial remain
+        # pending, and an old notification must never clear a newer order.
+        if order.status not in (
+            order.Completed,
+            order.Canceled,
+            order.Expired,
+            order.Margin,
+            order.Rejected,
+        ):
+            return
+        if self.order is not None and order.ref == self.order.ref:
+            self.order = None
+
     def next(self):
         if self.order:
             return

@@ -4,7 +4,7 @@
 
 ## Beginner GUI first (about five minutes after installation)
 
-Version 0.4.0 provides one local UI in two user-selected shells:
+Version 0.4.1 provides one local UI in two user-selected shells:
 
 - **Local browser mode** uses only the Python standard library and opens in your default browser.
 - **Desktop window mode** loads the exact same URL and service in a native WebView window.
@@ -57,8 +57,8 @@ local URL, PID, mode, instance ID, and ready state—never the session nonce—a
 is never overwritten. Maintainers can build a Windows onedir bundle and ZIP from an environment
 with the desktop, Excel, and data-API dependencies installed by running
 `python scripts/build_windows_ui.py --output dist`. Windows users can download the
-[v0.4.0 portable ZIP](https://github.com/mars-tw/anti-gambling-trader-tw/releases/download/v0.4.0/AntiGamblingTrader-windows-x64.zip)
-from the [v0.4.0 release page](https://github.com/mars-tw/anti-gambling-trader-tw/releases/tag/v0.4.0).
+[v0.4.1 portable ZIP](https://github.com/mars-tw/anti-gambling-trader-tw/releases/download/v0.4.1/AntiGamblingTrader-windows-x64.zip)
+from the [v0.4.1 release page](https://github.com/mars-tw/anti-gambling-trader-tw/releases/tag/v0.4.1).
 
 > **Live trading is not provided.** On the **API Data** page only, the GUI accepts credentials that
 > the user enters directly for read-only data. They are session-only by default and enter Windows
@@ -80,7 +80,7 @@ analyzes trade records locally and does not upload them. If you give files, scre
 to Claude Code or another cloud AI, the content may be transmitted and retained under that provider's
 policy; mask names, account numbers, LINE IDs, and other identifiers first. See the
 [official Claude Code data-usage documentation](https://code.claude.com/docs/en/data-usage).
-Some generated project charts may load an external CDN; the 0.4.0 workbench evidence SVGs, API candles, and HTML
+Some generated project charts may load an external CDN; the 0.4.1 workbench evidence SVGs, API candles, and HTML
 exports do not. Broker/API paths explicitly connect to their external services.
 
 > A tool that is **honest to the point of being unlikable**. It will not tell you "you will make money" —

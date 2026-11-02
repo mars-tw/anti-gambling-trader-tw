@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import math
 import re
 from dataclasses import dataclass
@@ -172,32 +173,18 @@ def _finite_number(value: Any, label: str, *, allow_blank: bool = True) -> float
         if allow_blank:
             return None
         raise ValueError(f"{label}不可留白")
-    raw = str(value).strip()
-    accounting_negative = (
-        (raw.startswith("(") and raw.endswith(")"))
-        or (raw.startswith("（") and raw.endswith("）"))
-    )
-    if accounting_negative:
-        raw = raw[1:-1]
-    # 幣別只允許出現在數字頭尾，不能用全域 replace 任意刪掉中間文字；
-    # 這樣既支援「JPY -120」「100 USDT」「US$100」，也不會把髒字串
-    # 碰巧修成可接受的數字。
-    currency_token = (
-        r"(?:NT\$|US\$|TWD|NTD|USD|JPY|EUR|GBP|CNY|RMB|HKD|"
-        r"USDT|USDC|BUSD)"
-    )
-    text = re.sub(rf"(?i)^\s*{currency_token}\s*", "", raw, count=1)
-    text = re.sub(rf"(?i)\s*{currency_token}\s*$", "", text, count=1)
-    text = re.sub(r"^[\$＄￥¥]\s*", "", text, count=1)
-    text = re.sub(r"[,，\s]", "", text)
-    try:
-        parsed = float(text)
-    except ValueError as exc:
-        raise ValueError(f"{label}必須是數字，收到 {value!r}") from exc
-    if not math.isfinite(parsed):
-        raise ValueError(f"{label}必須是有限數字")
-    if accounting_negative:
-        parsed = -abs(parsed)
+    # 新手入口和檔案載入器必須採用同一個金額語法。先在仍保有原始標註時
+    # 檢查，不能先把「USD100TWD」或「USD100USD」剝成裸數字再接受。
+    from .ingest.loader import _money_units, _to_float
+
+    annotations = _money_units(value)
+    if len(annotations) > 1:
+        raise ValueError(f"{label}只能標示一種幣別，收到 {value!r}")
+    if annotations and annotations[0] is None:
+        raise ValueError(f"{label}不可使用無法判定幣別的裸 $／¥，請填明確代碼")
+    parsed = _to_float(value, None)
+    if parsed is None:
+        raise ValueError(f"{label}必須是數字，收到 {value!r}")
     return parsed
 
 
@@ -223,15 +210,11 @@ def _normalize_currency(value: Any) -> str | None:
 
 
 def _currency_from_pnl_text(value: Any) -> str | None:
-    text = str(value or "").upper()
-    if "NT$" in text or re.search(r"\b(?:TWD|NTD)\b", text):
-        return "TWD"
-    if "US$" in text or re.search(r"\bUSD\b", text):
-        return "USD"
-    match = re.search(r"\b(JPY|EUR|GBP|CNY|CNH|RMB|HKD|USDT|USDC|BUSD)\b", text)
-    if not match:
-        return None
-    return "CNY" if match.group(1) == "RMB" else match.group(1)
+    # `_currency_from_amount` accepts a code adjacent to a numeric value, so
+    # USDT100 / USDC100 remain valid while USD100TWD stays ambiguous.
+    from .ingest.loader import _currency_from_amount
+
+    return _currency_from_amount(value)
 
 
 def build_beginner_row(
@@ -269,14 +252,33 @@ def build_beginner_row(
     else:
         raise ValueError("方向請填『買/做多』或『賣/做空』")
 
+    from .ingest.loader import _currency_from_amount, _money_units
+
+    def amount_unit(value: Any, label: str, *, is_quantity: bool = False) -> str | None:
+        annotations = _money_units(value)
+        if len(annotations) > 1:
+            raise ValueError(f"{label}只能標示一種幣別，收到 {value!r}")
+        if not annotations:
+            return None
+        unit = annotations[0]
+        if unit is None:
+            raise ValueError(f"{label}不可使用無法判定幣別的裸 $／¥，請填明確代碼")
+        if is_quantity:
+            raise ValueError("數量不可附帶幣別；請只填股數、口數或幣數")
+        # Keep this shared helper as the canonical single-annotation parser.
+        return _currency_from_amount(value)
+
     field_currency = _normalize_currency(currency)
-    amount_currency = _currency_from_pnl_text(pnl)
-    if field_currency and amount_currency and field_currency != amount_currency:
-        raise ValueError(
-            f"損益金額寫 {amount_currency}，但 --currency/幣別欄寫 {field_currency}；"
-            "請確認帳戶實際結算幣別"
+    raw_units = {
+        label: amount_unit(value, label, is_quantity=(label == "數量"))
+        for label, value in (
+            ("已實現損益", pnl),
+            ("進場價", entry_price),
+            ("出場價", exit_price),
+            ("數量", quantity),
+            ("手續費", fees),
         )
-    explicit_currency = field_currency or amount_currency
+    }
     pnl_n = _finite_number(pnl, "已實現損益")
     entry_n = _finite_number(entry_price, "進場價")
     exit_n = _finite_number(exit_price, "出場價")
@@ -295,6 +297,20 @@ def build_beginner_row(
         and qty_n > 0
     )
     market = infer_market(clean_symbol)
+    native_quote_currency = infer_pnl_currency(clean_symbol, market)
+    known_units = {unit for unit in raw_units.values() if unit}
+    if field_currency:
+        known_units.add(field_currency)
+    # A computed pnl inherits the venue's known quote unit even when its two
+    # price cells are bare. This closes the last path that could subtract a
+    # foreign labelled fee or save foreign labelled prices as native currency.
+    if pnl_n is None and native_quote_currency:
+        known_units.add(native_quote_currency)
+    if len(known_units) > 1:
+        shown = "、".join(sorted(known_units))
+        raise ValueError(f"價格、損益、成本與幣別欄不可混用 {shown}；沒有匯率時不可換算")
+    amount_currency = raw_units["已實現損益"]
+    explicit_currency = field_currency or amount_currency
     if pnl_n is None and market == Market.FOREX:
         raise ValueError(
             "外匯不可只用價差與數量推算，因報價幣與帳戶換匯口徑可能不同；"
@@ -321,7 +337,20 @@ def build_beginner_row(
         raise ValueError("出場時間不可早於進場時間")
 
     def fmt_number(value: float | None) -> str:
-        return "" if value is None else f"{value:g}"
+        """寫檔時保留浮點往返精度；整數仍用舊版無小數點寫法。
+
+        舊版 f"{value:g}" 只有 6 位有效數字：進場 70200.01 與出場 70200.02
+        都會被寫成 70200，載入後 0.01 USDT 的損益直接變成 0。這裡不做任何
+        四捨五入、epsilon 容忍或幣別小數位猜測，只保證 repr 可原值讀回。
+        """
+
+        if value is None:
+            return ""
+        number = float(value)
+        if number.is_integer() and abs(number) < 1e16:
+            # 1e16 以內的整數值用十進位整數字串仍可完整往返（數量 1、價格 70200）。
+            return str(int(number))
+        return repr(number)
 
     if pnl_n is not None and not explicit_currency:
         raise ValueError(
@@ -343,6 +372,28 @@ def build_beginner_row(
         "損益幣別": currency_text,
         "策略": _safe_spreadsheet_text(strategy),
     }
+
+
+def _file_tail_bytes(path: Path, size: int = 8192) -> bytes:
+    """只讀檔尾位元組，用來判斷既有換行慣例；不重寫也不轉碼既有檔案。"""
+
+    total = path.stat().st_size
+    with path.open("rb") as handle:
+        if total > size:
+            handle.seek(total - size)
+        return handle.read()
+
+
+def _newline_convention(tail: bytes) -> str:
+    """沿用舊檔的換行慣例；看不出來時用 csv 原本的 CRLF 預設。"""
+
+    if b"\r\n" in tail:
+        return "\r\n"
+    if b"\n" in tail:
+        return "\n"
+    if b"\r" in tail:
+        return "\r"
+    return "\r\n"
 
 
 def append_beginner_row(path: str | Path, row: dict[str, str]) -> tuple[Path, int]:
@@ -375,6 +426,21 @@ def append_beginner_row(path: str | Path, row: dict[str, str]) -> tuple[Path, in
                     if values and not str(values[0]).strip().startswith("#")
                 )
 
+        # 同一個欄名出現兩次時，無法確定這筆的值該寫進哪一欄；寧可拒絕，
+        # 也不要照 header 順序亂填而覆蓋使用者原本的資料。
+        duplicated = [
+            column
+            for column in BEGINNER_COLUMNS
+            if list(header).count(column) > 1
+        ]
+        if duplicated:
+            raise ValueError(
+                "現有檔案有重複的欄位名稱: "
+                + "、".join(duplicated)
+                + "。無法確定這筆要寫進哪一欄，請改用新的 --out 檔名，"
+                "避免寫壞原始資料。"
+            )
+
         missing = [column for column in BEGINNER_COLUMNS if column not in header]
         # 舊版範本沒有「損益」欄；只有在本列可由完整價量計算時才相容。
         required_missing = [column for column in missing if column != "損益幣別"]
@@ -391,15 +457,33 @@ def append_beginner_row(path: str | Path, row: dict[str, str]) -> tuple[Path, in
                 "現有檔案是舊版格式，缺少『損益幣別』欄，不能安全丟棄這筆的幣別。"
                 "請改用新的 --out 檔名，或先在舊檔新增『損益幣別』欄。"
             )
-        payload = {column: row.get(column, "") for column in header}
+        # 舊檔最後一列若沒有換行（很多試算表／手動編輯會這樣存），直接 append
+        # 會把舊的最後一欄和新列的第一欄黏成同一列：載入端少一筆（通常正好是
+        # 虧損那筆），但這裡卻回報新增成功。所以先補一個符合舊檔慣例的換行。
+        tail = _file_tail_bytes(out)
+        terminator = _newline_convention(tail)
+        needs_separator = bool(tail) and not tail.endswith((b"\n", b"\r"))
+
+        buffer = io.StringIO()
+        csv.writer(buffer, lineterminator=terminator).writerow(
+            [row.get(column, "") for column in header]
+        )
+        # 先試編碼再動檔案：cp950 舊檔存不下這筆字元時，不可以已經落地換行或
+        # 半列內容，否則會留下一列空交易或壞列。
+        payload_encoding = "utf-8" if encoding == "utf-8-sig" else encoding
         try:
-            with out.open("a", encoding=encoding, newline="") as handle:
-                csv.DictWriter(handle, fieldnames=header).writerow(payload)
+            payload = buffer.getvalue().encode(payload_encoding)
         except UnicodeEncodeError as exc:
+            label = "Big5" if payload_encoding == "cp950" else payload_encoding.upper()
             raise ValueError(
-                "現有檔案是 Big5 編碼，這筆內容含無法儲存的字元。"
+                f"現有檔案是 {label} 編碼，這筆內容含無法儲存的字元。"
                 "請先另存為 CSV UTF-8。"
             ) from exc
+        separator = terminator.encode(payload_encoding) if needs_separator else b""
+        # 以二進位 append 既有位元組：不重寫、不轉碼舊資料，也不會在檔案
+        # 中間插入第二個 UTF-8 BOM。
+        with out.open("ab") as handle:
+            handle.write(separator + payload)
     else:
         encoding = "utf-8-sig"
         with out.open("w", encoding=encoding, newline="") as handle:

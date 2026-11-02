@@ -2,7 +2,7 @@
 
 ## 新手先用圖形工作台（安裝後約 5 分鐘）
 
-0.4.0 提供同一套本機介面的兩種開法，由你選擇：
+0.4.1 提供同一套本機介面的兩種開法，由你選擇：
 
 - **本機瀏覽器版**：只用 Python 標準函式庫，畫面開在預設瀏覽器。
 - **桌面視窗版**：同一個網址、同一套服務，包在原生桌面 WebView 視窗中。
@@ -34,7 +34,7 @@ pip install -e ".[data-api]"  # shioaji==1.7.7；公開 Pionex／Binance K 線�
 交易證據圖表 → 視需要從「API 資料」讀取公開行情或本人唯讀資料 → 下載報告 → 產生紙上專案」。
 內建樣本永遠標示為示範，不是你的績效。
 
-0.4.0 的瀏覽器與桌面視窗共用同一組本機 SVG 圖表：累積已實現淨損益／回撤、
+0.4.1 的瀏覽器與桌面視窗共用同一組本機 SVG 圖表：累積已實現淨損益／回撤、
 單筆損益直方圖與 R7 分位數、實際前後段 holdout 卡片，以及另行啟動的資金警戒線情境。
 資金情境不猜本金；必須自行填入大於 0 的起始資金、確認紀錄中的單一結算幣別，並明確選擇
 「剩餘本金比例」「剩餘固定金額」或「虧損本金比例」。這些圖表不會改寫核心階段或解鎖實盤。
@@ -47,8 +47,8 @@ pip install -e ".[data-api]"  # shioaji==1.7.7；公開 Pionex／Binance K 線�
 
 自動驗收可使用 `--no-open --ready-file ui-ready.json`；ready JSON 只含本機網址、
 PID、模式、執行個體 ID 與就緒狀態，**不含工作階段 nonce**，而且既有檔案不會被覆蓋。
-Windows 使用者可從 [v0.4.0 發行頁](https://github.com/mars-tw/anti-gambling-trader-tw/releases/tag/v0.4.0)
-下載 [AntiGamblingTrader-windows-x64.zip](https://github.com/mars-tw/anti-gambling-trader-tw/releases/download/v0.4.0/AntiGamblingTrader-windows-x64.zip)。
+Windows 使用者可從 [v0.4.1 發行頁](https://github.com/mars-tw/anti-gambling-trader-tw/releases/tag/v0.4.1)
+下載 [AntiGamblingTrader-windows-x64.zip](https://github.com/mars-tw/anti-gambling-trader-tw/releases/download/v0.4.1/AntiGamblingTrader-windows-x64.zip)。
 維護者若要在 Windows 從已安裝的 desktop、excel 與 data-api 相依套件建立 onedir 與 ZIP，可執行
 `python scripts/build_windows_ui.py --output dist`。這只是建置指令；本頁不宣稱或連結
 尚未經可攜驗證的發行執行檔。
@@ -70,7 +70,7 @@ Windows 使用者可從 [v0.4.0 發行頁](https://github.com/mars-tw/anti-gambl
 紀錄上傳。若你把檔案、截圖或工具輸出交給 Claude Code／其他雲端 AI，內容可能依
 該供應商政策傳送與保存；分享前請遮蔽姓名、帳號、LINE ID 與可識別資訊。參考
 [Claude Code 官方資料使用說明](https://code.claude.com/docs/en/data-usage)。此外，部分生成
-圖表可能載入外部 CDN；0.4.0 工作台的證據圖表、API K 線 SVG 與匯出不使用 CDN。使用
+圖表可能載入外部 CDN；0.4.1 工作台的證據圖表、API K 線 SVG 與匯出不使用 CDN。使用
 券商/API 路徑則會明確連線到相應外部服務。
 
 > 一個**誠實到不討喜**的工具。它不會告訴你「你會賺錢」——
