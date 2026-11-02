@@ -254,16 +254,29 @@ def test_expectancy_positive(
         raise ValueError("置中 bootstrap 計算溢位")
     boot_means: list[float] = []        # 供 CI:重抽均值 = H0 重抽均值 + mean
     n_ge_obs = 0
-    for _ in range(n_bootstrap):
-        bm0 = _finite_sum(
-            rng.choices(shifted, k=n), label="bootstrap 重抽總和"
-        ) / n   # H0 世界的平均
-        if bm0 >= mean:
-            n_ge_obs += 1
-        boot_mean = bm0 + mean
-        if not math.isfinite(boot_mean):
-            raise ValueError("bootstrap 平均值計算溢位")
-        boot_means.append(boot_mean)
+    draw = rng.random
+    floor = math.floor
+    population_size = n + 0.0
+    draw_indices = range(n)
+    sample = [0.0] * n
+    fsum = math.fsum
+    isfinite = math.isfinite
+    try:
+        for _ in range(n_bootstrap):
+            for index in draw_indices:
+                sample[index] = shifted[floor(draw() * population_size)]
+            total = fsum(sample)
+            if not isfinite(total):
+                raise ValueError("bootstrap 重抽總和 計算結果不是有限數字")
+            bm0 = total / n   # H0 世界的平均
+            if bm0 >= mean:
+                n_ge_obs += 1
+            boot_mean = bm0 + mean
+            if not isfinite(boot_mean):
+                raise ValueError("bootstrap 平均值計算溢位")
+            boot_means.append(boot_mean)
+    except OverflowError as exc:
+        raise ValueError("bootstrap 重抽總和 計算溢位") from exc
     boot_means.sort()
     # (n+1)/(B+1) 修正:蒙地卡羅 p 值不該印出「恰好 0」的假精準 ——
     # 觀察值本身也算一次「至少一樣極端」的實現
