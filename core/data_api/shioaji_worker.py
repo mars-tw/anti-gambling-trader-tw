@@ -54,6 +54,24 @@ _SAFE_MESSAGES = {
 _MISSING = object()
 _UTC_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _HISTORICAL_NS_TIMESTAMP_BASIS = "sdk_historical_ns_encoded_local_wall_time"
+_HISTORICAL_KBAR_LABEL_BASIS = "sdk_historical_kbar_ts_is_source_minute_end_label"
+_CANONICAL_BAR_TIME_BASIS = "bar_open_epoch_ms_utc"
+# ``api.kbars()`` history is published as 1-minute source rows.
+_SOURCE_KBAR_INTERVAL_MS = 60_000
+
+# Only these kinds carry a period/limit on the real wire.  ``validate_query``
+# builds an account query from ``market`` (plus an optional symbol and opaque
+# account_ref) and rejects period fields outright, so the worker must mirror
+# exactly that shape instead of demanding candle keys for every kind.
+_TEMPORAL_KINDS = frozenset({"candles", "fills", "realizations"})
+_QUERY_KEYS_BY_KIND: dict[str, frozenset[str]] = {
+    "candles": frozenset({"symbol", "market", "interval", "start_ms", "end_ms", "limit"}),
+    "fills": frozenset({"symbol", "market", "start_ms", "end_ms", "limit", "account_ref"}),
+    "realizations": frozenset(
+        {"symbol", "market", "start_ms", "end_ms", "limit", "account_ref"}
+    ),
+    "account": frozenset({"symbol", "market", "account_ref"}),
+}
 
 if ZoneInfo is not None:
     try:
@@ -166,10 +184,13 @@ def _validate_request(request: Any) -> tuple[str, dict[str, Any], int, str, str]
     if capabilities.get("allow_ca") is not False:
         raise _WorkerFailure("invalid_response")
     kind = request.get("kind")
-    if kind not in {"candles", "fills", "realizations", "account"}:
+    if kind not in _QUERY_KEYS_BY_KIND:
         raise _WorkerFailure("invalid_response")
     query = request.get("query")
     if not isinstance(query, Mapping):
+        raise _WorkerFailure("invalid_response")
+    allowed_keys = _QUERY_KEYS_BY_KIND[str(kind)]
+    if any(not isinstance(key, str) or key not in allowed_keys for key in query):
         raise _WorkerFailure("invalid_response")
     validated = dict(query)
     market = validated.get("market")
@@ -180,20 +201,26 @@ def _validate_request(request: Any) -> tuple[str, dict[str, Any], int, str, str]
         raise _WorkerFailure("invalid_response")
     if kind != "account" and not symbol:
         raise _WorkerFailure("invalid_response")
+    # The capture boundary is always strict: it bounds every period check and
+    # every "is this bar closed yet" decision.
     try:
-        start_ms = _strict_int(validated.get("start_ms"), minimum=0)
-        end_ms = _strict_int(validated.get("end_ms"), minimum=0)
-        limit = _strict_int(validated.get("limit"), minimum=1)
         captured_ms = _strict_int(request.get("captured_at_ms"), minimum=0)
     except ValueError:
         raise _WorkerFailure("invalid_response") from None
-    if start_ms > end_ms or end_ms > captured_ms + 60_000:
-        raise _WorkerFailure("invalid_response")
-    if limit > (2000 if kind == "candles" else MAX_ROWS):
-        raise _WorkerFailure("invalid_response")
-    validated["start_ms"] = start_ms
-    validated["end_ms"] = end_ms
-    validated["limit"] = limit
+    if kind in _TEMPORAL_KINDS:
+        try:
+            start_ms = _strict_int(validated.get("start_ms"), minimum=0)
+            end_ms = _strict_int(validated.get("end_ms"), minimum=0)
+            limit = _strict_int(validated.get("limit"), minimum=1)
+        except ValueError:
+            raise _WorkerFailure("invalid_response") from None
+        if start_ms > end_ms or end_ms > captured_ms + 60_000:
+            raise _WorkerFailure("invalid_response")
+        if limit > (2000 if kind == "candles" else MAX_ROWS):
+            raise _WorkerFailure("invalid_response")
+        validated["start_ms"] = start_ms
+        validated["end_ms"] = end_ms
+        validated["limit"] = limit
     if kind == "candles":
         interval = validated.get("interval")
         if interval not in INTERVAL_MS:
@@ -471,6 +498,27 @@ def _timestamp_ms(value: Any) -> int:
     raise ValueError("timestamp")
 
 
+def _historical_kbar_open_ms(label_ms: int) -> int:
+    """Shift one historical Kbar minute-END label to our canonical bar-OPEN time.
+
+    Shioaji's historical ``api.kbars()`` ``ts`` labels the END of the source
+    minute: a row stamped 09:01 covers ``[09:00, 09:01)`` (pinned SDK
+    reference: Shioaji v1.7.7 ``MARKET_DATA.md``).  Our canonical bars are
+    keyed by OPEN time, so the label is shifted back exactly one source minute
+    before the query-range filter, bucketing, source-minute coverage, resample
+    and closed-bar decisions consume it.
+
+    This is deliberately scoped to historical Kbars only.  Tick, order,
+    account and other SDK datetime fields are already wall-clock instants and
+    must never be shifted.
+    """
+
+    open_ms = label_ms - _SOURCE_KBAR_INTERVAL_MS
+    if open_ms < 0:
+        raise ValueError("timestamp")
+    return open_ms
+
+
 def _column_values(value: Any) -> list[Any]:
     if isinstance(value, (str, bytes, bytearray, Mapping)):
         raise ValueError("column")
@@ -531,7 +579,8 @@ def _kbar_records(payload: Any) -> tuple[list[dict[str, Any]], int]:
 
 
 def _parse_kbar(raw: Mapping[str, Any]) -> dict[str, Any]:
-    time_ms = _timestamp_ms(raw.get("time"))
+    source_label_ms = _timestamp_ms(raw.get("time"))
+    time_ms = _historical_kbar_open_ms(source_label_ms)
     open_text = _decimal_text(_plain(raw.get("open")), positive=True)
     high_text = _decimal_text(_plain(raw.get("high")), positive=True)
     low_text = _decimal_text(_plain(raw.get("low")), positive=True)
@@ -543,6 +592,7 @@ def _parse_kbar(raw: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("kbar")
     return {
         "time_ms": time_ms,
+        "source_label_ms": source_label_ms,
         "open": open_text,
         "high": high_text,
         "low": low_text,
@@ -655,6 +705,8 @@ def _with_kbar_timestamp_basis(dataset: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(provenance, dict):
         raise _WorkerFailure("invalid_response")
     provenance["platform_timestamp_basis"] = _HISTORICAL_NS_TIMESTAMP_BASIS
+    provenance["platform_bar_label_basis"] = _HISTORICAL_KBAR_LABEL_BASIS
+    provenance["bar_time_basis"] = _CANONICAL_BAR_TIME_BASIS
     try:
         encoded = json.dumps(
             dataset,

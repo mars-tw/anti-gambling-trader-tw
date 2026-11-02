@@ -10,10 +10,18 @@ from typing import Any
 
 import pytest
 
+from core.data_api.models import validate_query
 from core.data_api.shioaji import ShioajiDataClient
 from core.data_api.shioaji import _cleanup_owned_temp, _new_owned_temp
 from core.data_api.shioaji_worker import PROTOCOL, _sdk_info, _timestamp_ms, handle_request
 from core.data_api.transport import DataAPIError
+
+# 2026-05-18 Taipei wall clock.  ``ts`` labels the END of the source minute,
+# so the 09:01 label is the bar that OPENS at 09:00.
+_FIRST_LABEL_NS = 1_779_094_860_000_000_000  # ts label 09:01 -> bar [09:00, 09:01)
+_OPEN_0900_MS = 1_779_066_000_000
+_OPEN_0901_MS = 1_779_066_060_000
+_END_0903_MS = 1_779_066_180_000
 
 
 @dataclass(frozen=True)
@@ -67,7 +75,7 @@ class _FakeAPI:
     def kbars(self, contract: Any, **kwargs: Any) -> dict[str, list[Any]]:
         assert contract is self.contracts.contract
         assert kwargs["timeout"] == 5000
-        start = 1_779_094_860_000_000_000
+        start = _FIRST_LABEL_NS
         return {
             "ts": [start, start + 60_000_000_000],
             "Open": ["100.00", "101.00"],
@@ -117,23 +125,34 @@ def _sdk(api: _FakeAPI) -> Any:
     )
 
 
-def _request(kind: str, *, account_ref: str | None = None) -> dict[str, Any]:
-    query: dict[str, Any] = {
-        "symbol": "2330",
-        "market": "stock",
-        "interval": "1m",
-        "start_ms": 1_779_066_060_000,
-        "end_ms": 1_779_066_180_000,
-        "limit": 2000,
-    }
+def _query(kind: str, *, account_ref: str | None = None) -> dict[str, Any]:
+    """Build the exact query the parent serializes for this kind.
+
+    Using the real validator keeps the fixture on the real wire schema: an
+    account query carries no period/limit fields at all, and a fills query
+    carries no interval.
+    """
+
+    validation_kind = "fills" if kind == "realizations" else kind
+    raw: dict[str, Any] = {"symbol": "2330", "market": "stock"}
+    if validation_kind == "candles":
+        raw["interval"] = "1m"
+    if validation_kind in {"candles", "fills"}:
+        raw["start_ms"] = _OPEN_0900_MS
+        raw["end_ms"] = _END_0903_MS
+        raw["limit"] = 2000
     if account_ref is not None:
-        query["account_ref"] = account_ref
+        raw["account_ref"] = account_ref
+    return validate_query("shioaji", validation_kind, raw)
+
+
+def _request(kind: str, *, account_ref: str | None = None) -> dict[str, Any]:
     return {
         "protocol": PROTOCOL,
         "action": "fetch",
         "kind": kind,
-        "query": query,
-        "captured_at_ms": 1_779_066_180_000,
+        "query": _query(kind, account_ref=account_ref),
+        "captured_at_ms": _END_0903_MS,
         "request_capabilities": {
             "read_only": True,
             "allow_orders": False,
@@ -168,8 +187,14 @@ def test_worker_login_is_read_only_and_kbar_nanoseconds_become_milliseconds() ->
         "force_refresh": False,
     }
     dataset = frame["result"]
-    assert dataset["rows"][0]["time_ms"] == 1_779_066_060_000
+    # The 09:01 / 09:02 minute-END labels are the bars OPENING at 09:00 / 09:01.
+    assert [row["time_ms"] for row in dataset["rows"]] == [_OPEN_0900_MS, _OPEN_0901_MS]
     assert dataset["rows"][0]["open"] == "100.00"
+    assert dataset["rows"][0]["is_closed"] is True
+    assert dataset["rows"][1]["open"] == "101.00"
+    assert dataset["coverage"]["complete"] is True
+    assert dataset["coverage"]["missing_bars"] == 0
+    assert dataset["provenance"]["bar_time_basis"] == "bar_open_epoch_ms_utc"
     assert dataset["timezone"] == "Asia/Taipei"
     assert api.logout_called is True
 
@@ -193,10 +218,14 @@ def test_windows_runtime_acl_uses_current_token_under_hostile_environment(monkey
 def test_worker_kbar_query_filters_to_requested_utc_window() -> None:
     api = _FakeAPI()
     request = _request("candles")
-    request["query"]["start_ms"] = 1_779_066_120_000
+    # Window opens at 09:01, so only the bar OPENING at 09:01 (ts label 09:02)
+    # survives; the 09:01 label belongs to the 09:00 bar outside the window.
+    request["query"]["start_ms"] = _OPEN_0901_MS
     frame = handle_request(request, sdk_module=_sdk(api))
     assert frame["ok"] is True
-    assert [row["time_ms"] for row in frame["result"]["rows"]] == [1_779_066_120_000]
+    rows = frame["result"]["rows"]
+    assert [row["time_ms"] for row in rows] == [_OPEN_0901_MS]
+    assert rows[0]["open"] == "101.00"
 
 
 def test_multiple_matching_accounts_require_opaque_selection() -> None:

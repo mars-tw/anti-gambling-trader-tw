@@ -614,7 +614,11 @@ class BinanceDataClient:
             raise DataAPIError("invalid_response")
         if not isinstance(quote_asset, str) or not quote_asset or len(quote_asset) > 32:
             raise DataAPIError("invalid_response")
-        context.advance(pages=1, records=len(matches))
+        # Symbol metadata consumes one request/page of the budget but returns
+        # zero data rows.  Charging its descriptor against MAX_RETURNED_ROWS
+        # made a legal, exactly-at-limit fills query (5000 trades) fail as
+        # "oversize" after all pages had already been fetched.
+        context.advance(pages=1, records=0)
         return base_asset, quote_asset
 
     def _private_get(

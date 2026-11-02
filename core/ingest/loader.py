@@ -111,7 +111,12 @@ def _build_field_map(
     explicit_overrides: Optional[dict[str, str]] = None,
 ) -> dict[str, str]:
     """把實際欄位名對應到標準欄位名。回傳 {標準名: 實際欄位名}。"""
-    normalized = {_norm(c): c for c in columns}
+    column_list = list(columns)
+    # Mapping keys are normalized below, so the duplicate check must use the
+    # exact same normalization. Otherwise `pnl` and `P N L` silently collapse
+    # before an override or financial-field guard can see the ambiguity.
+    _reject_duplicate_headers(column_list, "欄位")
+    normalized = {_norm(c): c for c in column_list}
     explicit = explicit_overrides or {}
     field_map: dict[str, str] = {}
     for std, synonyms in FIELD_SYNONYMS.items():
@@ -223,6 +228,77 @@ def _naive(dt: datetime) -> datetime:
     return dt
 
 
+# ── 金額旁的幣別標註 ────────────────────────────────────────────────
+# 幣別只能出現在數字頭尾；不要用全域 replace 把中間髒文字修成數字。
+# 長碼必須排在短碼前，且英文字碼兩側要有字母邊界(但允許緊鄰數字)：
+# 這樣「USDT100」不會被 USD 吃掉前綴而剩下「T100」，
+# 「USDX100」/「100XUSD」這種不明標籤也不會被靜默刪掉。
+_CURRENCY_CODES: tuple[str, ...] = (
+    "USDT", "USDC", "BUSD", "TWD", "NTD", "USD", "JPY", "EUR", "GBP",
+    "CHF", "CAD", "AUD", "NZD", "SGD", "KRW", "CNY", "CNH", "RMB", "HKD",
+)
+_CURRENCY_CODE_ALIASES = {"NTD": "TWD", "RMB": "CNY"}
+# 裸 $ / ¥ 同時對應多個幣別 —— 只能算「有寫但不明」，絕不猜測。
+_CURRENCY_SYMBOLS: dict[str, str | None] = {
+    "NT$": "TWD", "US$": "USD", "$": None, "＄": None, "￥": None, "¥": None,
+}
+_CODE_TOKEN = "|".join(sorted(_CURRENCY_CODES, key=len, reverse=True))
+_SYMBOL_TOKEN = "|".join(
+    re.escape(symbol)
+    for symbol in sorted(_CURRENCY_SYMBOLS, key=len, reverse=True)
+)
+_CURRENCY_PREFIX_RE = re.compile(
+    rf"^\s*(?:(?P<code>{_CODE_TOKEN})(?![A-Za-z])|(?P<symbol>{_SYMBOL_TOKEN}))\s*",
+    re.IGNORECASE,
+)
+_CURRENCY_SUFFIX_RE = re.compile(
+    rf"\s*(?:(?<![A-Za-z])(?P<code>{_CODE_TOKEN})|(?P<symbol>{_SYMBOL_TOKEN}))\s*$",
+    re.IGNORECASE,
+)
+
+
+def _annotation_currency(match: re.Match[str]) -> str | None:
+    """把一個幣別標註正規化；無法對應唯一幣別時回傳 None。"""
+
+    code = match.group("code")
+    if code:
+        code = code.upper()
+        return _CURRENCY_CODE_ALIASES.get(code, code)
+    return _CURRENCY_SYMBOLS.get(str(match.group("symbol")).upper())
+
+
+def _money_label(value: Any) -> tuple[str, tuple[str | None, ...]]:
+    """剝掉金額頭尾的幣別標註，回傳 (剩餘文字, 標註序列)。
+
+    標註本身可能是 None(例如裸 `$`)——那是「有寫但不明」，
+    由呼叫端決定要拒絕還是維持未知,這裡不替使用者猜幣別。
+    載入器與新手輸入共用同一組規則,才不會一邊接受一邊靜默剝掉。
+    """
+
+    text = "" if value is None else str(value).strip()
+    labels: list[str | None] = []
+    prefix = _CURRENCY_PREFIX_RE.match(text)
+    if prefix:
+        text = text[prefix.end():]
+        labels.append(_annotation_currency(prefix))
+    suffix = _CURRENCY_SUFFIX_RE.search(text)
+    if suffix:
+        text = text[:suffix.start()]
+        labels.append(_annotation_currency(suffix))
+    return text.strip(), tuple(labels)
+
+
+def _money_units(value: Any) -> tuple[str | None, ...]:
+    """金額(含會計括號內)總共寫了哪些幣別標註。"""
+
+    text, labels = _money_label(value)
+    if len(text) >= 2 and text.startswith("(") and text.endswith(")"):
+        inner = text[1:-1].strip()
+        if inner and "(" not in inner and ")" not in inner:
+            labels = labels + _money_label(inner)[1]
+    return labels
+
+
 def _to_float(value: Any, default: float | None = None) -> float | None:
     if value is None or value == "":
         return default
@@ -232,35 +308,9 @@ def _to_float(value: Any, default: float | None = None) -> float | None:
         f = float(value)
         return f if math.isfinite(f) else default
 
-    # 幣別只能出現在數字頭尾；不要用全域 replace 把中間髒文字修成數字。
-    # 長碼必須排在短碼前，且英文字碼要有邊界，避免 USDT 被 USD 部分吞掉。
     s = str(value).strip()
-    code_token = (
-        r"(?:USDT|USDC|BUSD|TWD|NTD|USD|JPY|EUR|GBP|CHF|CAD|AUD|NZD|"
-        r"SGD|KRW|CNY|CNH|RMB|HKD)(?![A-Z])"
-    )
-    symbol_token = r"(?:NT\$|US\$|\$|￥|¥|＄)"
-
-    def strip_currency(text: str) -> tuple[str, int]:
-        count = 0
-        prefix = re.match(
-            rf"(?i)^\s*(?:{code_token}|{symbol_token})\s*", text
-        )
-        if prefix:
-            text = text[prefix.end():]
-            count += 1
-        suffix = re.search(
-            rf"(?i)\s*(?:(?<![A-Z])(?:USDT|USDC|BUSD|TWD|NTD|USD|JPY|"
-            rf"EUR|GBP|CHF|CAD|AUD|NZD|SGD|KRW|CNY|CNH|RMB|HKD)|"
-            rf"{symbol_token})\s*$",
-            text,
-        )
-        if suffix:
-            text = text[:suffix.start()]
-            count += 1
-        return text.strip(), count
-
-    s, currency_count = strip_currency(s)
+    s, labels = _money_label(s)
+    currency_count = len(labels)
     accounting_negative = False
     if "(" in s or ")" in s:
         # 會計負數只接受一組完整包住金額的括號；不修補缺半邊或巢狀括號。
@@ -270,8 +320,8 @@ def _to_float(value: Any, default: float | None = None) -> float | None:
         if not inner or "(" in inner or ")" in inner:
             return default
         accounting_negative = True
-        s, inner_currency_count = strip_currency(inner)
-        currency_count += inner_currency_count
+        s, inner_labels = _money_label(inner)
+        currency_count += len(inner_labels)
 
     # 同一金額同時寫兩個幣別符號並不明確；拒絕猜測。
     if currency_count > 1:
@@ -307,23 +357,16 @@ def _normalize_currency(value: Any) -> str | None:
 
 
 def _currency_from_amount(value: Any) -> str | None:
-    """讀取損益值旁的幣別；不從商品代號猜帳戶結算幣別。"""
+    """讀取金額旁明示的幣別；不從商品代號猜帳戶結算幣別。
 
-    text = str(value or "").upper().strip()
-    if "NT$" in text or re.search(r"\b(?:TWD|NTD)\b", text):
-        return "TWD"
-    if "US$" in text or re.search(r"\bUSD\b", text):
-        return "USD"
-    if re.search(r"\bJPY\b", text):
-        return "JPY"
-    match = re.search(
-        r"\b(EUR|GBP|CHF|CAD|AUD|NZD|SGD|KRW|CNY|CNH|RMB|HKD|"
-        r"USDT|USDC|BUSD)\b",
-        text,
-    )
-    if not match:
+    只有「恰好一個可辨識標註」才算明示:沒寫、寫了裸 $、或頭尾寫了兩個
+    不同幣別,都維持未知(那些值 `_to_float` 也會拒收,不會被偷偷算進去)。
+    """
+
+    units = _money_units(value)
+    if len(units) != 1:
         return None
-    return {"RMB": "CNY"}.get(match.group(1), match.group(1))
+    return units[0]
 
 
 def sniff_format(path: str | Path) -> str:
@@ -338,6 +381,37 @@ def sniff_format(path: str | Path) -> str:
     raise ValueError(f"不支援的副檔名: {ext}(支援 .csv / .json / .xlsx)")
 
 
+def _reject_duplicate_headers(headers: Iterable[Any], source: str) -> None:
+    """擋下會以 `_norm` 收斂成同一鍵的非空欄名。
+
+    任何 dict 化(csv.DictReader / dict(zip(...)) / json 物件)都會讓同名欄位
+    只留下最後一個值 —— 例如兩個 pnl 欄分別是 -1000 與 +100 時,工具會靜默
+    只看到 +100 並據此計算統計優勢。這種歧義無法由程式替使用者猜測,也不是
+    field_overrides 能解決的(覆寫仍指向同一個被收斂過的鍵),必須直接拒收。
+    """
+    seen: dict[str, str] = {}
+    duplicates: list[str] = []
+    for raw in headers:
+        name = "" if raw is None else str(raw)
+        normalized = _norm(name)
+        if not normalized:
+            # Excel 尾端的空白欄位本來就會重複出現,不算歧義。
+            continue
+        if normalized in seen:
+            shown = seen[normalized] if seen[normalized] == name else f"{seen[normalized]} / {name}"
+            if shown not in duplicates:
+                duplicates.append(shown)
+        else:
+            seen[normalized] = name
+    if duplicates:
+        joined = "、".join(duplicates)
+        raise ValueError(
+            f"{source} 有重複欄名: {joined}。同名欄位會互相覆蓋,無法判斷哪一欄"
+            "才是真實值(例如兩個 pnl 分別為 -1000 與 +100),因此拒絕載入。"
+            "請在原始檔中改名或刪除重複欄位 —— 此情況無法用 field_overrides 解決。"
+        )
+
+
 def _rows_from_csv(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     import csv
 
@@ -348,6 +422,11 @@ def _rows_from_csv(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     for enc in ("utf-8-sig", "cp950"):
         try:
             with path.open("r", encoding=enc, newline="") as f:
+                # 先用 csv.reader 取原始標題列:DictReader 會把同名欄位收斂成
+                # 單一鍵,必須在那之前就檢查重複。
+                raw_header = next(csv.reader(f, delimiter=delimiter), [])
+                _reject_duplicate_headers(raw_header, path.name)
+                f.seek(0)
                 reader = csv.DictReader(f, delimiter=delimiter)
                 rows = list(reader)
                 columns = reader.fieldnames or []
@@ -365,7 +444,15 @@ def _rows_from_csv(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
 
 
 def _rows_from_json(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
-    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        # json.loads 預設會讓後出現的同名鍵覆蓋前者({"pnl": -1000, "pnl": 100}
+        # 只剩 100),因此在收斂成 dict 之前就檢查每一層物件。
+        _reject_duplicate_headers([key for key, _ in pairs], path.name)
+        return dict(pairs)
+
+    data = json.loads(
+        path.read_text(encoding="utf-8-sig"), object_pairs_hook=_no_duplicate_keys
+    )
     # 支援 [{...}, ...] 或 {"trades": [...]}
     if isinstance(data, dict):
         for key in ("trades", "data", "records", "orders"):
@@ -398,15 +485,24 @@ def _rows_from_excel(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
             "讀取 Excel 需要 openpyxl。請執行: pip install openpyxl"
         ) from exc
     wb = load_workbook(path, read_only=True, data_only=True)
-    ws = wb.active
-    rows_iter = ws.iter_rows(values_only=True)
-    header = [str(c) if c is not None else "" for c in next(rows_iter)]
-    rows: list[dict[str, Any]] = []
-    for raw in rows_iter:
-        if all(c is None for c in raw):
-            continue
-        rows.append(dict(zip(header, raw)))
-    wb.close()
+    # 不論標題列驗證失敗或空白工作表,read_only 的 workbook 都必須關閉,
+    # 否則暫存檔案句柄會留著不放。
+    try:
+        ws = wb.active
+        rows_iter = ws.iter_rows(values_only=True)
+        first_row = next(rows_iter, None)
+        if first_row is None:
+            raise ValueError(f"Excel 檔沒有標題列: {path.name}")
+        header = [str(c) if c is not None else "" for c in first_row]
+        # dict(zip(...)) 會讓同名欄位只留下最後一個值,必須在建立 dict 之前擋下。
+        _reject_duplicate_headers(header, path.name)
+        rows: list[dict[str, Any]] = []
+        for raw in rows_iter:
+            if all(c is None for c in raw):
+                continue
+            rows.append(dict(zip(header, raw)))
+    finally:
+        wb.close()
     return header, rows
 
 
@@ -591,6 +687,7 @@ def load_trades(
     ambiguous_forex_symbols: set[str] = set()
     invalid_lot_unit_symbols: set[str] = set()
     ambiguous_entry_basis_symbols: set[str] = set()
+    ambiguous_price_unit_symbols: set[str] = set()
     tw_lot_converted = 0
     direct_pnl_count = 0
     gross_pnl_adjusted_count = 0
@@ -599,6 +696,7 @@ def load_trades(
     retained_bad_exit_time_count = 0
     ignored_net_fee_count = 0
     invalid_direct_notional_symbols: set[str] = set()
+    conflicting_money_unit_symbols: set[str] = set()
     for row in rows:
         row_no = len(trades) + skipped + 1
         symbol = str(get(row, "symbol", "")).strip()
@@ -695,6 +793,72 @@ def load_trades(
         else:
             mult, mult_known = 1.0, True
 
+        # 任何金額相加減之前，先比對這一列所有「明示」的幣別標註。_to_float
+        # 會先剝掉標註才做數學，所以 gross 100 TWD 減成本 50 USD 會算出假的
+        # 「50 TWD」，TWD 進場價配 USD 出場價也會推出假價差 —— 沒有匯率就不
+        # 可混算。裸 $ 這種「有寫但不明」的標註維持未知(不猜幣別)，完全沒寫
+        # 標註的純數字則維持原行為。
+        declared_money_unit = _normalize_currency(get(row, "pnl_currency"))
+        money_units_seen = {unit for unit in _money_units(pnl_raw) if unit}
+        if declared_money_unit:
+            money_units_seen.add(declared_money_unit)
+        entry_price_units = _money_units(get(row, "entry_price"))
+        exit_price_units = _money_units(get(row, "exit_price"))
+        price_annotations = entry_price_units + exit_price_units
+        price_money_units = {
+            unit for unit in price_annotations if unit
+        }
+        unknown_price_money_unit = any(unit is None for unit in price_annotations)
+        native_quote_currency = _infer_pnl_currency(symbol, market)
+        # A price-difference pnl is denominated in the known native quote even
+        # when the price cells themselves are bare numbers.  Seed that unit
+        # before inspecting fees so a foreign labelled cost cannot be deducted
+        # and relabelled as the venue currency.
+        if pnl is None and native_quote_currency:
+            money_units_seen.add(native_quote_currency)
+        money_units_conflict = (
+            len(price_money_units | money_units_seen) > 1
+            or len(entry_price_units) > 1
+            or len(exit_price_units) > 1
+        )
+        if pnl is None:
+            if unknown_price_money_unit:
+                skipped += 1
+                if len(skip_reasons) < 10:
+                    skip_reasons.append(
+                        f"第 {row_no} 列({symbol}):進場價/出場價使用未明示幣別的 $／¥；"
+                        "無法確認價差損益單位，拒絕推算"
+                    )
+                continue
+            if money_units_conflict:
+                skipped += 1
+                if len(skip_reasons) < 10:
+                    skip_reasons.append(
+                        f"第 {row_no} 列({symbol}):進場價/出場價/損益的幣別標註互相"
+                        "衝突，或同一個金額寫了兩個幣別；缺少匯率，拒絕跨幣別推算損益"
+                    )
+                continue
+            # 價差推算的結果幣別就是報價幣別，成本必須是同一個單位才能扣。
+            money_units_seen |= price_money_units
+            # A labelled price is evidence about the arithmetic unit, not a
+            # hint that it may be relabelled as the venue's native quote.  For
+            # example, USD 100 -> USD 101 on 2330/BTCUSDT cannot safely become
+            # TWD/USDT pnl or receive a TWD/USDT automatic-cost estimate.
+            if (
+                price_money_units
+                and native_quote_currency
+                and price_money_units != {native_quote_currency}
+            ):
+                skipped += 1
+                if len(skip_reasons) < 10:
+                    stated = "、".join(sorted(price_money_units))
+                    skip_reasons.append(
+                        f"第 {row_no} 列({symbol}):價差價格明示為 {stated}，"
+                        f"但 {symbol} 的原生報價幣別為 {native_quote_currency}；"
+                        "缺少匯率與費率口徑，拒絕改標或自動估算成本"
+                    )
+                continue
+
         fee_values: list[float] = []
         provided_fee_columns: set[str] = set()
         fee_parse_failed = False
@@ -705,21 +869,32 @@ def load_trades(
                 continue
             provided_fee_columns.add(fee_column)
             parsed_fee = _to_float(fees_raw, None)
-            if parsed_fee is None:
+            fee_units = {unit for unit in _money_units(fees_raw) if unit}
+            # 成本幣別與這列損益幣別(或其他成本分項)不同時不可相加：用錯單位
+            # 扣出來的「淨損益」比完全不扣更假，且會被當成同一幣別報出去。
+            fee_unit_conflict = len(fee_units | money_units_seen) > 1
+            if parsed_fee is None or fee_unit_conflict:
                 if is_direct_net_pnl:
-                    # net pnl 已含成本；髒掉的 optional fee 只能放棄揭露，不可把
-                    # 整筆已結算損益丟掉，否則會形成可被盈虧相關缺值扭曲的樣本。
+                    # net pnl 已含成本；髒掉或幣別不符的 optional fee 只能放棄
+                    # 揭露，不可把整筆已結算損益丟掉，否則會形成可被盈虧相關
+                    # 缺值扭曲的樣本。
                     ignored_net_fee = True
                     fee_values = []
                     provided_fee_columns.clear()
                     break
                 fee_parse_failed = True
                 if len(skip_reasons) < 10:
+                    detail = (
+                        "的幣別與損益幣別不一致；缺少匯率，拒絕跨幣別扣除成本"
+                        if fee_unit_conflict else
+                        "無法解析；拒絕靜默改用估計成本"
+                    )
                     skip_reasons.append(
                         f"第 {row_no} 列({symbol}):成本欄 {fee_column}="
-                        f"「{fees_raw}」無法解析；拒絕靜默改用估計成本"
+                        f"「{fees_raw}」{detail}"
                     )
                 break
+            money_units_seen |= fee_units
             fee_values.append(parsed_fee)
         if fee_parse_failed:
             skipped += 1
@@ -783,7 +958,6 @@ def load_trades(
 
         # direct pnl 是券商結算後金額，不能從 AAPL/EURJPY 猜帳戶幣別。
         # 價差推算則一定是商品原生報價幣別；若另填不同幣別但沒有匯率，也拒絕。
-        native_quote_currency = _infer_pnl_currency(symbol, market)
         if (
             pnl is None
             and explicit_currency
@@ -995,6 +1169,20 @@ def load_trades(
             quantity = 0.0
             notional_reliable = False
             invalid_lot_unit_symbols.add(symbol)
+        if pnl is not None and money_units_conflict:
+            # direct/gross pnl 是已結算金額，仍可用；但價格與損益的幣別標註
+            # 互相衝突時，名目本金沒有可驗證的分母 —— 歸零部位，絕不跨幣別
+            # 算報酬率。
+            entry_price = 0.0
+            exit_price = 0.0
+            quantity = 0.0
+            notional_reliable = False
+            conflicting_money_unit_symbols.add(symbol)
+        if pnl is not None and unknown_price_money_unit:
+            # 已結算 direct net pnl 本身仍是帳戶金額；但 $／¥ 等價格標註
+            # 不能證明名目本金與該結算金額可相比，因此停用 ROI／名目部位。
+            notional_reliable = False
+            ambiguous_price_unit_symbols.add(symbol)
         if (
             pnl is not None
             and (
@@ -1126,16 +1314,28 @@ def load_trades(
             f", ⚠️{syms} 的成交價/buy-sell 欄無法證明是實際進場成本——"
             "已保留 direct pnl，但停用名目部位、報酬率與回撤百分比"
         )
+    if ambiguous_price_unit_symbols:
+        syms = ", ".join(sorted(ambiguous_price_unit_symbols)[:3])
+        warn += (
+            f", ⚠️{syms} 的價格使用未明示幣別的 $/¥——已保留 direct pnl，"
+            "但停用名目部位、報酬率與回撤百分比"
+        )
     if invalid_direct_notional_symbols:
         syms = ", ".join(sorted(invalid_direct_notional_symbols)[:3])
         warn += (
             f", ⚠️{syms} 的 direct pnl 缺少有效進場價或數量——已保留損益金額，"
             "但停用名目部位、報酬率與回撤百分比"
         )
+    if conflicting_money_unit_symbols:
+        syms = ", ".join(sorted(conflicting_money_unit_symbols)[:3])
+        warn += (
+            f", ⚠️{syms} 的價格與損益幣別標註互相衝突——已保留已結算的損益金額，"
+            "但停用名目部位、報酬率與回撤百分比；不做匯率換算"
+        )
     if ignored_net_fee_count:
         warn += (
-            f", ⚠️{ignored_net_fee_count} 筆 direct net pnl 的 optional fee 無法解析或為負數；"
-            "淨損益已保留，fees 改為 0/未知且未重複扣除"
+            f", ⚠️{ignored_net_fee_count} 筆 direct net pnl 的 optional fee 無法解析或為負數"
+            "/幣別不符；淨損益已保留，fees 改為 0/未知且未重複扣除"
         )
 
     currencies = {t.pnl_currency for t in trades if t.pnl_currency}
