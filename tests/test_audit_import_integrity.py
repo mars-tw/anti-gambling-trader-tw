@@ -82,3 +82,57 @@ def test_direct_net_pnl_keeps_settlement_amount_but_never_converts_foreign_optio
     assert trade.pnl == 100
     assert trade.pnl_currency == "TWD"
     assert trade.fees == 0
+
+
+@pytest.mark.parametrize(
+    "symbol,foreign_fee",
+    [("AAPL", "TWD5"), ("2330", "USD5"), ("BTCUSDT", "USD5")],
+)
+def test_computed_bare_prices_seed_native_quote_before_foreign_fee_math(tmp_path, symbol, foreign_fee):
+    path = tmp_path / f"foreign-fee-{symbol}.csv"
+    path.write_text(
+        "symbol,entry_price,exit_price,quantity,side,fees\n"
+        f"{symbol},100,101,10,buy,{foreign_fee}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="幣別|沒有任何有效"):
+        load_trades(path, auto_estimate_costs=True)
+
+
+@pytest.mark.parametrize(
+    "symbol,native_fee,currency",
+    [("AAPL", "USD5", "USD"), ("2330", "TWD5", "TWD"), ("BTCUSDT", "USDT5", "USDT")],
+)
+def test_computed_bare_prices_accept_matching_native_fee(tmp_path, symbol, native_fee, currency):
+    path = tmp_path / f"native-fee-{symbol}.csv"
+    path.write_text(
+        "symbol,entry_price,exit_price,quantity,side,fees\n"
+        f"{symbol},100,101,10,buy,{native_fee}\n",
+        encoding="utf-8",
+    )
+    trade = load_trades(path, auto_estimate_costs=False).trades[0]
+    assert trade.pnl == 5
+    assert trade.pnl_currency == currency
+
+
+def test_unknown_price_symbol_rejects_computed_pnl_but_preserves_direct_net_without_roi(tmp_path):
+    computed = tmp_path / "unknown-price-computed.json"
+    computed.write_text(
+        json.dumps([{"symbol": "AAPL", "side": "buy", "entry_price": "¥100", "exit_price": "¥101", "quantity": 10}]),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="未明示幣別|沒有任何有效"):
+        load_trades(computed, auto_estimate_costs=False)
+
+    direct = tmp_path / "unknown-price-direct.json"
+    direct.write_text(
+        json.dumps([{"symbol": "AAPL", "side": "buy", "entry_price": "¥100", "exit_price": "¥101", "quantity": 10, "net_pnl": "USD100", "fees": 0}]),
+        encoding="utf-8",
+    )
+    log = load_trades(direct, auto_estimate_costs=False)
+    trade = log.trades[0]
+    assert trade.pnl == 100
+    assert trade.pnl_currency == "USD"
+    assert trade.notional_reliable is False
+    assert trade.contract_value == 0
+    assert "未明示幣別" in log.source

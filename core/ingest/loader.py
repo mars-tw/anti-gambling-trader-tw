@@ -687,6 +687,7 @@ def load_trades(
     ambiguous_forex_symbols: set[str] = set()
     invalid_lot_unit_symbols: set[str] = set()
     ambiguous_entry_basis_symbols: set[str] = set()
+    ambiguous_price_unit_symbols: set[str] = set()
     tw_lot_converted = 0
     direct_pnl_count = 0
     gross_pnl_adjusted_count = 0
@@ -803,16 +804,32 @@ def load_trades(
             money_units_seen.add(declared_money_unit)
         entry_price_units = _money_units(get(row, "entry_price"))
         exit_price_units = _money_units(get(row, "exit_price"))
+        price_annotations = entry_price_units + exit_price_units
         price_money_units = {
-            unit for unit in entry_price_units + exit_price_units if unit
+            unit for unit in price_annotations if unit
         }
+        unknown_price_money_unit = any(unit is None for unit in price_annotations)
         native_quote_currency = _infer_pnl_currency(symbol, market)
+        # A price-difference pnl is denominated in the known native quote even
+        # when the price cells themselves are bare numbers.  Seed that unit
+        # before inspecting fees so a foreign labelled cost cannot be deducted
+        # and relabelled as the venue currency.
+        if pnl is None and native_quote_currency:
+            money_units_seen.add(native_quote_currency)
         money_units_conflict = (
             len(price_money_units | money_units_seen) > 1
             or len(entry_price_units) > 1
             or len(exit_price_units) > 1
         )
         if pnl is None:
+            if unknown_price_money_unit:
+                skipped += 1
+                if len(skip_reasons) < 10:
+                    skip_reasons.append(
+                        f"第 {row_no} 列({symbol}):進場價/出場價使用未明示幣別的 $／¥；"
+                        "無法確認價差損益單位，拒絕推算"
+                    )
+                continue
             if money_units_conflict:
                 skipped += 1
                 if len(skip_reasons) < 10:
@@ -1161,6 +1178,11 @@ def load_trades(
             quantity = 0.0
             notional_reliable = False
             conflicting_money_unit_symbols.add(symbol)
+        if pnl is not None and unknown_price_money_unit:
+            # 已結算 direct net pnl 本身仍是帳戶金額；但 $／¥ 等價格標註
+            # 不能證明名目本金與該結算金額可相比，因此停用 ROI／名目部位。
+            notional_reliable = False
+            ambiguous_price_unit_symbols.add(symbol)
         if (
             pnl is not None
             and (
@@ -1291,6 +1313,12 @@ def load_trades(
         warn += (
             f", ⚠️{syms} 的成交價/buy-sell 欄無法證明是實際進場成本——"
             "已保留 direct pnl，但停用名目部位、報酬率與回撤百分比"
+        )
+    if ambiguous_price_unit_symbols:
+        syms = ", ".join(sorted(ambiguous_price_unit_symbols)[:3])
+        warn += (
+            f", ⚠️{syms} 的價格使用未明示幣別的 $/¥——已保留 direct pnl，"
+            "但停用名目部位、報酬率與回撤百分比"
         )
     if invalid_direct_notional_symbols:
         syms = ", ".join(sorted(invalid_direct_notional_symbols)[:3])

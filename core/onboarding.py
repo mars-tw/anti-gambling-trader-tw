@@ -279,14 +279,6 @@ def build_beginner_row(
             ("手續費", fees),
         )
     }
-    known_units = {unit for unit in raw_units.values() if unit}
-    if field_currency:
-        known_units.add(field_currency)
-    if len(known_units) > 1:
-        shown = "、".join(sorted(known_units))
-        raise ValueError(f"價格、損益、成本與幣別欄不可混用 {shown}；沒有匯率時不可換算")
-    amount_currency = raw_units["已實現損益"]
-    explicit_currency = field_currency or amount_currency
     pnl_n = _finite_number(pnl, "已實現損益")
     entry_n = _finite_number(entry_price, "進場價")
     exit_n = _finite_number(exit_price, "出場價")
@@ -305,6 +297,20 @@ def build_beginner_row(
         and qty_n > 0
     )
     market = infer_market(clean_symbol)
+    native_quote_currency = infer_pnl_currency(clean_symbol, market)
+    known_units = {unit for unit in raw_units.values() if unit}
+    if field_currency:
+        known_units.add(field_currency)
+    # A computed pnl inherits the venue's known quote unit even when its two
+    # price cells are bare. This closes the last path that could subtract a
+    # foreign labelled fee or save foreign labelled prices as native currency.
+    if pnl_n is None and native_quote_currency:
+        known_units.add(native_quote_currency)
+    if len(known_units) > 1:
+        shown = "、".join(sorted(known_units))
+        raise ValueError(f"價格、損益、成本與幣別欄不可混用 {shown}；沒有匯率時不可換算")
+    amount_currency = raw_units["已實現損益"]
+    explicit_currency = field_currency or amount_currency
     if pnl_n is None and market == Market.FOREX:
         raise ValueError(
             "外匯不可只用價差與數量推算，因報價幣與帳戶換匯口徑可能不同；"

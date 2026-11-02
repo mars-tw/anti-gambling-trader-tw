@@ -252,3 +252,50 @@ def test_raw_currency_annotations_are_rejected_before_a_row_is_returned(kwargs):
             exit_time="2026-01-05 10:00",
             **kwargs,
         )
+
+
+@pytest.mark.parametrize(
+    "symbol,entry_price,exit_price,fees",
+    [
+        ("BTCUSDT", "USD100", "USD101", "USD0"),
+        ("AAPL", "100", "101", "TWD5"),
+        ("2330", "100", "101", "USD5"),
+    ],
+)
+def test_computed_beginner_row_rejects_foreign_price_or_fee_before_write(
+    symbol, entry_price, exit_price, fees
+):
+    with pytest.raises(ValueError, match="不可混用|換算"):
+        build_beginner_row(
+            symbol=symbol,
+            side="買",
+            entry_price=entry_price,
+            exit_price=exit_price,
+            quantity=10,
+            fees=fees,
+            exit_time="2026-01-05 10:00",
+        )
+
+
+@pytest.mark.parametrize(
+    "symbol,entry_price,exit_price,fees,currency",
+    [
+        ("AAPL", "USD100", "USD101", "USD5", "USD"),
+        ("2330", "TWD100", "TWD101", "TWD5", "TWD"),
+        ("BTCUSDT", "USDT100", "USDT101", "USDT5", "USDT"),
+    ],
+)
+def test_computed_beginner_row_accepts_matching_native_units(
+    symbol, entry_price, exit_price, fees, currency
+):
+    row = build_beginner_row(
+        symbol=symbol,
+        side="買",
+        entry_price=entry_price,
+        exit_price=exit_price,
+        quantity=10,
+        fees=fees,
+        exit_time="2026-01-05 10:00",
+    )
+    assert row["損益"] == ""
+    assert row["損益幣別"] == currency
