@@ -98,10 +98,14 @@
   let currentJobStatus = null;
   let currentDataset = null;
   let currentQuery = null;
-  let pollTimer = null;
   let refreshTimer = null;
   let pollNonce = 0;
   let requestInFlight = false;
+  let queryGeneration = 0;
+  let analysisGeneration = 0;
+  let activeSync = null;
+  let analysisPending = null;
+  const ownedSyncs = new Set();
   let suppressInvalidation = false;
   let dataApiCapabilities = null;
   let credentialPanelAutoOpened = false;
@@ -182,11 +186,16 @@
 
   function stopTimers() {
     pollNonce += 1;
-    if (pollTimer !== null) window.clearTimeout(pollTimer);
     if (refreshTimer !== null) window.clearTimeout(refreshTimer);
-    pollTimer = null;
     refreshTimer = null;
-    requestInFlight = false;
+  }
+
+  function stopAllTimers() {
+    stopTimers();
+    ownedSyncs.forEach((owner) => {
+      if (owner.pollTimer !== null) window.clearTimeout(owner.pollTimer);
+      owner.pollTimer = null;
+    });
   }
 
   function isPublicCandleRequest() {
@@ -223,8 +232,24 @@
     }
     ["data-export-json", "data-export-csv", "data-analyze"].forEach((id) => {
       const button = byId(id);
-      if (button) button.disabled = busy || closed || !currentDataset;
+      if (button) {
+        button.disabled = busy || closed || !currentDataset
+          || (id === "data-analyze" && analysisPending !== null);
+      }
     });
+  }
+
+  function setAnalysisPending(pending) {
+    analysisPending = pending;
+    const button = byId("data-analyze");
+    if (button) {
+      button.disabled = requestInFlight || closed || !currentDataset || pending !== null;
+    }
+  }
+
+  function invalidateAnalysisState(reason) {
+    analysisGeneration += 1;
+    ui.invalidateAnalysis(reason);
   }
 
   function clearRenderedDataset(reason) {
@@ -247,14 +272,13 @@
 
   function invalidateForInput(reason) {
     if (suppressInvalidation || closed) return;
-    const running = currentJobStatus === "running" || currentJobStatus === "cancel_requested";
-    const jobId = currentJobId;
+    queryGeneration += 1;
+    const owner = activeSync;
     stopTimers();
-    if (running && jobId) {
-      ui.post("/api/data-cancel", { job_id: jobId }).catch(() => {});
-    }
+    if (owner) cancelOwnedSync(owner);
+    activeSync = null;
     clearRenderedDataset(reason || "設定已變更；舊資料集與分析已失效。");
-    ui.invalidateAnalysis("API 設定或輸入已變更；舊分析與匯出綁定已失效。");
+    invalidateAnalysisState("API 設定或輸入已變更；舊分析與匯出綁定已失效。");
   }
 
   function updateSDKHint() {
@@ -300,11 +324,16 @@
     const isShioaji = provider === "shioaji";
     const isCandles = kind === "candles";
     const isAccount = kind === "account";
+    const accountApplicable = isShioaji && (kind === "fills" || isAccount);
     const credentialPanel = byId("data-credentials-panel");
     const credentialProvider = byId("credential-provider");
     if (selectedProvider !== null && selectedProvider !== provider) {
       byId("credential-key").value = "";
       byId("credential-secret").value = "";
+      if (account && account.options) {
+        while (account.options.length > 1) account.remove(1);
+      }
+      if (account) account.value = "";
     }
     selectedProvider = provider;
     credentialProvider.value = provider;
@@ -331,7 +360,8 @@
       start.disabled = isAccount;
       end.disabled = isAccount;
       limit.disabled = isAccount;
-      account.disabled = !isShioaji;
+      account.disabled = !accountApplicable;
+      if (!accountApplicable) account.value = "";
       limit.max = kind === "fills" ? "5000" : "2000";
       if (Number(limit.value) > Number(limit.max)) limit.value = limit.max;
       byId("crypto-analysis-confirmations").hidden = isShioaji;
@@ -384,7 +414,9 @@
       if (kind === "candles") query.interval = byId("data-interval").value;
     }
     const accountRef = byId("data-account-ref").value;
-    if (accountRef) query.account_ref = accountRef;
+    if (provider === "shioaji" && (kind === "fills" || kind === "account") && accountRef) {
+      query.account_ref = accountRef;
+    }
     return { provider, kind, profile, query };
   }
 
@@ -752,56 +784,117 @@
     setJobBusy(false);
   }
 
-  function pollJob(jobId, nonce, attempt = 0) {
-    if (closed || nonce !== pollNonce || jobId !== currentJobId) return;
-    if (attempt >= MAX_POLL_ATTEMPTS) {
-      currentJobStatus = "failed";
+  function isPendingJobStatus(status) {
+    return status === "running" || status === "cancel_requested";
+  }
+
+  function ownerStillOwnsScreen(owner) {
+    return activeSync === owner
+      && !owner.abandoned
+      && !closed
+      && owner.generation === queryGeneration;
+  }
+
+  function cancelOwnedSync(owner) {
+    if (!owner || owner.settled) return;
+    owner.abandoned = true;
+    if (!owner.jobId || owner.cancelSent) return;
+    owner.cancelSent = true;
+    Promise.resolve(ui.post("/api/data-cancel", { job_id: owner.jobId }))
+      .catch(() => {})
+      .finally(() => {
+        if (!closed) pollOwnedSync(owner);
+      });
+  }
+
+  function settleOwnedSync(owner, job) {
+    if (!owner || owner.settled) return;
+    owner.settled = true;
+    if (owner.pollTimer !== null) window.clearTimeout(owner.pollTimer);
+    owner.pollTimer = null;
+    ownedSyncs.delete(owner);
+    if (activeSync !== owner) return;
+    activeSync = null;
+    if (closed) return;
+
+    const status = job && job.status ? job.status : "failed";
+    currentJobStatus = status;
+    const progressNode = byId("data-progress");
+    if (progressNode) progressNode.hidden = true;
+    if (owner.abandoned) {
+      currentJobId = null;
+      currentJobStatus = null;
       setJobBusy(false);
-      setText(byId("data-job-status"), "狀態輪詢已達安全上限；未採用未確認資料。");
-      ui.showError("唯讀 API 工作未在安全期限內回報終態。");
+      setText(
+        byId("data-job-status"),
+        status === "cancelled"
+          ? "唯讀資料工作已取消，沒有採用部分結果。"
+          : "唯讀資料工作已失去目前查詢的所有權；沒有採用回傳資料。"
+      );
       return;
     }
-    pollTimer = window.setTimeout(async () => {
-      if (closed || nonce !== pollNonce || jobId !== currentJobId || requestInFlight === false) return;
+
+    setJobBusy(false);
+    if (status === "completed" && job.result) {
+      renderDataset(job.result, job);
+      return;
+    }
+    if (status === "cancelled") {
+      setText(byId("data-job-status"), "唯讀資料工作已取消，沒有採用部分結果。");
+      return;
+    }
+    const message = job && job.error && job.error.message
+      ? job.error.message
+      : "唯讀資料工作失敗；沒有採用部分結果。";
+    setText(byId("data-job-status"), message);
+    ui.showError(message);
+  }
+
+  function pollOwnedSync(owner) {
+    if (closed || !owner || owner.settled || !owner.jobId || owner.pollTimer !== null) return;
+    if (owner.pollAttempts >= MAX_POLL_ATTEMPTS) {
+      settleOwnedSync(owner, {
+        status: "failed",
+        error: { message: "唯讀 API 工作未在安全期限內回報終態。" },
+      });
+      return;
+    }
+    owner.pollTimer = window.setTimeout(async () => {
+      owner.pollTimer = null;
+      if (closed || owner.settled) return;
       try {
-        const job = await ui.api(`/api/data-job/${jobId}`);
-        if (closed || nonce !== pollNonce || jobId !== currentJobId) return;
-        currentJobStatus = job.status;
-        const progress = job.progress || {};
-        const pages = Number(progress.pages) || 0;
-        const records = Number(progress.records) || 0;
-        const progressNode = byId("data-progress");
-        progressNode.hidden = false;
-        progressNode.value = Math.min(95, Math.max(2, pages * 5));
-        setText(byId("data-job-status"), `已讀取 ${formatCount(pages)} 頁、${formatCount(records)} 列；仍可查看其他唯讀狀態。`);
-        if (job.status === "running") {
-          pollJob(jobId, nonce, attempt + 1);
+        const job = await ui.api(`/api/data-job/${owner.jobId}`);
+        if (closed || owner.settled) return;
+        owner.pollAttempts += 1;
+        if (ownerStillOwnsScreen(owner)) {
+          currentJobId = owner.jobId;
+          currentJobStatus = job.status;
+          const progress = job.progress || {};
+          const pages = Number(progress.pages) || 0;
+          const records = Number(progress.records) || 0;
+          const progressNode = byId("data-progress");
+          if (progressNode) {
+            progressNode.hidden = false;
+            progressNode.value = Math.min(95, Math.max(2, pages * 5));
+          }
+          setText(byId("data-job-status"), `已讀取 ${formatCount(pages)} 頁、${formatCount(records)} 列；仍可查看其他唯讀狀態。`);
+        }
+        if (isPendingJobStatus(job.status)) {
+          pollOwnedSync(owner);
           return;
         }
-        progressNode.hidden = true;
-        setJobBusy(false);
-        if (job.status === "completed" && job.result) {
-          renderDataset(job.result, job);
-        } else if (job.status === "cancelled") {
-          setText(byId("data-job-status"), "唯讀資料工作已取消，沒有採用部分結果。");
-        } else {
-          const message = job.error && job.error.message ? job.error.message : "唯讀資料工作失敗；沒有採用部分結果。";
-          setText(byId("data-job-status"), message);
-          ui.showError(message);
-        }
+        settleOwnedSync(owner, job);
       } catch (error) {
-        if (nonce !== pollNonce) return;
-        currentJobStatus = "failed";
-        setJobBusy(false);
-        const message = error && error.message ? error.message : "無法讀取唯讀資料工作狀態。";
-        setText(byId("data-job-status"), message);
-        ui.showError(message);
+        settleOwnedSync(owner, {
+          status: "failed",
+          error: { message: error && error.message ? error.message : "無法讀取唯讀資料工作狀態。" },
+        });
       }
     }, POLL_MS);
   }
 
   async function startSync(automatic = false) {
-    if (closed || requestInFlight || currentJobStatus === "running") return;
+    if (closed || requestInFlight || (activeSync && !activeSync.settled)) return;
     if (automatic && !active) return;
     if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     refreshTimer = null;
@@ -812,28 +905,63 @@
       if (!automatic) ui.showError(error.message);
       return;
     }
-    currentQuery = request;
+    const immutableRequest = Object.freeze({
+      ...request,
+      query: Object.freeze({ ...request.query }),
+    });
+    const owner = {
+      generation: queryGeneration + 1,
+      request: immutableRequest,
+      jobId: null,
+      pollTimer: null,
+      pollAttempts: 0,
+      abandoned: false,
+      cancelSent: false,
+      settled: false,
+    };
+    queryGeneration = owner.generation;
+    activeSync = owner;
+    ownedSyncs.add(owner);
+    currentQuery = immutableRequest;
+    currentJobId = null;
     currentDataset = null;
     byId("data-result").hidden = true;
-    ui.invalidateAnalysis("新的 API 讀取已開始；舊分析、資金情境與匯出綁定已失效。");
+    invalidateAnalysisState("新的 API 讀取已開始；舊分析、資金情境與匯出綁定已失效。");
     currentJobStatus = "running";
     setJobBusy(true);
     byId("data-progress").hidden = false;
     byId("data-progress").value = 2;
     setText(byId("data-job-status"), automatic ? "正在刷新公開 K 線……" : "正在建立唯讀資料工作……");
     try {
-      const job = await ui.post("/api/data-sync", request);
-      currentJobId = job.job_id;
+      const job = await ui.post("/api/data-sync", immutableRequest);
+      owner.jobId = job && job.job_id ? job.job_id : null;
+      if (!owner.jobId) {
+        settleOwnedSync(owner, {
+          status: "failed",
+          error: { message: "唯讀資料工作沒有回傳可追蹤的 job_id。" },
+        });
+        return;
+      }
+      if (closed || owner.abandoned || activeSync !== owner || owner.generation !== queryGeneration) {
+        cancelOwnedSync(owner);
+        if (!closed) pollOwnedSync(owner);
+        return;
+      }
+      currentJobId = owner.jobId;
       currentJobStatus = job.status;
-      pollNonce += 1;
-      pollJob(currentJobId, pollNonce);
+      // The sync acknowledgement intentionally carries only lifecycle state;
+      // even an already-completed acknowledgement must fetch its result from
+      // the owned status endpoint before anything can be rendered.
+      if (isPendingJobStatus(job.status) || job.status === "completed") {
+        pollOwnedSync(owner);
+      } else {
+        settleOwnedSync(owner, job);
+      }
     } catch (error) {
-      currentJobStatus = "failed";
-      setJobBusy(false);
-      byId("data-progress").hidden = true;
-      const message = error && error.message ? error.message : "無法啟動唯讀資料工作。";
-      setText(byId("data-job-status"), message);
-      ui.showError(message);
+      settleOwnedSync(owner, {
+        status: "failed",
+        error: { message: error && error.message ? error.message : "無法啟動唯讀資料工作。" },
+      });
     }
   }
 
@@ -898,8 +1026,23 @@
     }
   }
 
+  function analysisStillCurrent(token) {
+    if (
+      closed
+      || analysisPending !== token
+      || analysisGeneration !== token.generation
+      || queryGeneration !== token.queryGeneration
+      || currentJobId !== token.jobId
+      || currentDataset !== token.dataset
+    ) return false;
+    return byId("data-opening-zero").checked === token.opening
+      && byId("data-transfers-reconciled").checked === token.transfers
+      && byId("data-pnl-basis").value === token.pnlBasis
+      && byId("data-total-costs").checked === token.totalCosts;
+  }
+
   async function analyzeClosed() {
-    if (!currentJobId || !currentDataset || requestInFlight) return;
+    if (!currentJobId || !currentDataset || requestInFlight || analysisPending !== null) return;
     const shioaji = currentDataset.provider === "shioaji";
     const opening = byId("data-opening-zero").checked;
     const transfers = byId("data-transfers-reconciled").checked;
@@ -913,6 +1056,18 @@
       setText(byId("data-analysis-status"), "需先確認損益是 gross 或 net，並確認費用／交易稅總額完整；原始資料仍可下載。");
       return;
     }
+    const token = {
+      generation: analysisGeneration + 1,
+      queryGeneration,
+      jobId: currentJobId,
+      dataset: currentDataset,
+      opening,
+      transfers,
+      pnlBasis,
+      totalCosts,
+    };
+    analysisGeneration = token.generation;
+    setAnalysisPending(token);
     setText(byId("data-analysis-status"), "正在將可閉合週期交給既有統計核心……");
     try {
       const result = await ui.post("/api/data-analyze", {
@@ -922,6 +1077,7 @@
         pnl_basis: pnlBasis,
         total_costs_confirmed: totalCosts,
       });
+      if (!analysisStillCurrent(token)) return;
       if (!result.available || !result.analysis) {
         const normalization = result.normalization || {};
         const warnings = Array.isArray(normalization.warnings) ? normalization.warnings.join("；") : "";
@@ -932,9 +1088,12 @@
       ui.applyAnalysis(result.analysis);
       ui.showNotice("已用可閉合且費用口徑已確認的交易建立分析；原始 API 列仍未被改寫。");
     } catch (error) {
+      if (!analysisStillCurrent(token)) return;
       const message = error && error.message ? error.message : "無法建立已平倉分析。";
       setText(byId("data-analysis-status"), message);
       ui.showError(message);
+    } finally {
+      if (analysisPending === token) setAnalysisPending(null);
     }
   }
 
@@ -952,16 +1111,22 @@
       if (state) updateCapabilities(state);
     });
     syncForm.addEventListener("input", () => invalidateForInput("API 查詢輸入已變更；舊資料集與分析已失效。"));
-    byId("data-provider").addEventListener("change", () => { updateFormForProvider(); });
-    byId("data-kind").addEventListener("change", () => { updateFormForProvider(); });
+    byId("data-provider").addEventListener("change", () => {
+      invalidateForInput("資料來源已變更；舊資料集與分析已失效。");
+      updateFormForProvider();
+    });
+    byId("data-kind").addEventListener("change", () => {
+      invalidateForInput("資料種類已變更；舊資料集與分析已失效。");
+      updateFormForProvider();
+    });
     syncForm.addEventListener("submit", (event) => { event.preventDefault(); startSync(false); });
     byId("data-cancel").addEventListener("click", async () => {
-      if (!currentJobId || currentJobStatus !== "running") return;
+      const owner = activeSync;
+      if (!owner || currentJobStatus !== "running") return;
       currentJobStatus = "cancel_requested";
       setJobBusy(true);
       setText(byId("data-job-status"), "正在取消唯讀資料工作……");
-      try { await ui.post("/api/data-cancel", { job_id: currentJobId }); }
-      catch (error) { ui.showError(error && error.message ? error.message : "無法送出取消要求。"); }
+      cancelOwnedSync(owner);
     });
     byId("data-export-json").addEventListener("click", () => exportDataset("json"));
     byId("data-export-csv").addEventListener("click", () => exportDataset("csv"));
@@ -969,28 +1134,36 @@
     ["data-opening-zero", "data-transfers-reconciled", "data-pnl-basis", "data-total-costs"].forEach((id) => {
       byId(id).addEventListener("change", () => {
         setText(byId("data-analysis-status"), "確認條件已變更；尚未建立新的已平倉分析。");
-        ui.invalidateAnalysis("分析確認條件已變更；舊分析與風險情境已失效，可保留原始資料重新分析。");
+        invalidateAnalysisState("分析確認條件已變更；舊分析與風險情境已失效，可保留原始資料重新分析。");
       });
     });
     document.addEventListener("ui:section-change", (event) => {
       const nextActive = Boolean(event.detail && event.detail.section === "api-data");
       if (!nextActive && active) {
-        const running = currentJobStatus === "running" || currentJobStatus === "cancel_requested";
-        const jobId = currentJobId;
         stopTimers();
-        if (running && jobId) ui.post("/api/data-cancel", { job_id: jobId }).catch(() => {});
+        if (activeSync && !activeSync.settled) {
+          currentJobStatus = "cancel_requested";
+          setJobBusy(true);
+          cancelOwnedSync(activeSync);
+        }
       }
       active = nextActive;
       if (active) scheduleRefresh();
     });
     document.addEventListener("ui:session-close", () => {
       closed = true;
-      stopTimers();
+      queryGeneration += 1;
+      invalidateAnalysisState("工作階段已關閉；舊分析與風險情境已失效。");
+      if (activeSync) cancelOwnedSync(activeSync);
+      stopAllTimers();
       byId("credential-key").value = "";
       byId("credential-secret").value = "";
       currentDataset = null;
       currentJobId = null;
+      currentJobStatus = null;
       currentQuery = null;
+      activeSync = null;
+      setJobBusy(false);
     });
     updateSavedCredentialMode();
     updateFormForProvider();

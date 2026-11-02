@@ -251,6 +251,7 @@ def test_binance_saturated_history_switches_to_legal_from_id_request() -> None:
         raise AssertionError(call)
 
     transport = _Transport(responder)
+    context = _Context(now)
     dataset = BinanceDataClient(
         transport=transport,
         credentials=_Pair(),
@@ -263,7 +264,7 @@ def test_binance_saturated_history_switches_to_legal_from_id_request() -> None:
             "end_ms": now,
             "limit": 2000,
         },
-        _Context(now),
+        context,
     )
     trade_calls = [call for call in transport.calls if call["path"] == "/api/v3/myTrades"]
     assert "startTime" in trade_calls[0]["params"]
@@ -274,6 +275,10 @@ def test_binance_saturated_history_switches_to_legal_from_id_request() -> None:
     assert "endTime" not in trade_calls[1]["params"]
     assert len(dataset["rows"]) == 1000
     assert dataset["coverage"]["complete"] is True
+    # serverTime + exchangeInfo + 1 trade page + 1 successor page.
+    assert context.pages == 4
+    # Metadata pages must never be charged against the returned-row budget.
+    assert context.records == 1000
 
 
 def test_binance_signature_covers_exact_urlencoded_query() -> None:
