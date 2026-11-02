@@ -172,6 +172,17 @@ def _parse_time(value: Any) -> datetime:
     if isinstance(value, datetime):
         return _naive(value)
     s = str(value).strip()
+    if (
+        type(s) is str
+        and len(s) in (10, 16, 19)
+        and s[4] == "-" and s[7] == "-"
+        and (len(s) == 10 or (s[10] == " " and s[13] == ":"))
+        and (len(s) != 19 or s[16] == ":")
+    ):
+        try:
+            return datetime.fromisoformat(s)
+        except ValueError:
+            pass
     # 嘗試多種常見格式
     formats = [
         "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d",
@@ -309,6 +320,12 @@ def _to_float(value: Any, default: float | None = None) -> float | None:
         return f if math.isfinite(f) else default
 
     s = str(value).strip()
+    if type(s) is str and s and not s.strip("0123456789.+-eE_"):
+        try:
+            f = float(s)
+        except ValueError:
+            return default
+        return f if math.isfinite(f) else default
     s, labels = _money_label(s)
     currency_count = len(labels)
     accounting_negative = False
@@ -363,6 +380,9 @@ def _currency_from_amount(value: Any) -> str | None:
     不同幣別,都維持未知(那些值 `_to_float` 也會拒收,不會被偷偷算進去)。
     """
 
+    text = str(value or "").upper().strip()
+    if text.isascii() and not text.isupper():
+        return None
     units = _money_units(value)
     if len(units) != 1:
         return None
@@ -601,12 +621,56 @@ def load_trades(
         col = field_map.get(std)
         return row.get(col, default) if col else default
 
+    # Reuse immutable scalar results only for plain strings, within this upload.
+    time_cache: dict[str, datetime] = {}
+    number_cache: dict[str, float | None] = {}
+    local_date_cache = {}
+    field_currency_cache: dict[str, str | None] = {}
+    amount_currency_cache: dict[str, str | None] = {}
+
+    def parse_time(value: Any) -> datetime:
+        if type(value) is not str:
+            return _parse_time(value)
+        if value not in time_cache:
+            time_cache[value] = _parse_time(value)
+        return time_cache[value]
+
+    def to_float(value: Any, default: float | None = None) -> float | None:
+        if type(value) is not str:
+            return _to_float(value, default)
+        if value not in number_cache:
+            number_cache[value] = _to_float(value)
+        parsed = number_cache[value]
+        return default if parsed is None else parsed
+
+    def local_calendar_date(value: Any):
+        if type(value) is not str:
+            return _local_calendar_date(value)
+        if value not in local_date_cache:
+            local_date_cache[value] = _local_calendar_date(value)
+        return local_date_cache[value]
+
+    def normalize_currency(value: Any) -> str | None:
+        if type(value) is not str:
+            return _normalize_currency(value)
+        if value not in field_currency_cache:
+            field_currency_cache[value] = _normalize_currency(value)
+        return field_currency_cache[value]
+
+    def currency_from_amount(value: Any) -> str | None:
+        if type(value) is not str:
+            return _currency_from_amount(value)
+        if value not in amount_currency_cache:
+            amount_currency_cache[value] = _currency_from_amount(value)
+        return amount_currency_cache[value]
+
     normalized_columns = {_norm(column): column for column in columns}
 
     def matching_columns(names: set[str]) -> list[str]:
+        normalized_names = {_norm(name) for name in names}
         return [
             actual for normalized, actual in normalized_columns.items()
-            if normalized in {_norm(name) for name in names}
+            if normalized in normalized_names
         ]
 
     fee_override = field_map.get("fees") if field_overrides and "fees" in field_overrides else None
@@ -629,13 +693,18 @@ def load_trades(
     # pnl 時間會在逐列階段降級為 unknown；若在這裡把髒字串當成無時區，
     # 它會讓同檔內原本合法的 aware 時間也整批被拒絕。
     time_awareness: set[bool] = set()
+    checked_times: set[str] = set()
     for row in rows:
         for std in ("entry_time", "exit_time"):
             value = get(row, std)
+            if type(value) is str:
+                if value in checked_times:
+                    continue
+                checked_times.add(value)
             if not _has_time_value(value):
                 continue
             try:
-                _parse_time(value)
+                parse_time(value)
             except ValueError:
                 continue
             time_awareness.add(_time_has_explicit_zone(value))
@@ -712,7 +781,7 @@ def load_trades(
         # 先判斷是否真的有可用的 direct net pnl。只有這種已結算金額，才可在
         # optional 時間或費用欄髒掉時保留；gross pnl 與價差推算仍需完整可信資料。
         pnl_raw = get(row, "pnl")
-        pnl = _to_float(pnl_raw, None)
+        pnl = to_float(pnl_raw, None)
         pnl_was_provided = (
             pnl_raw is not None and str(pnl_raw).strip() not in ("", "-", "—")
         )
@@ -747,8 +816,8 @@ def load_trades(
         entry_local_date = None
         if entry_time_known:
             try:
-                entry_time = _parse_time(entry_time_raw)
-                entry_local_date = _local_calendar_date(entry_time_raw)
+                entry_time = parse_time(entry_time_raw)
+                entry_local_date = local_calendar_date(entry_time_raw)
             except ValueError as exc:
                 if not is_direct_net_pnl:
                     skipped += 1
@@ -765,8 +834,8 @@ def load_trades(
         exit_local_date = None
         if exit_time_known:
             try:
-                exit_time = _parse_time(exit_time_raw)
-                exit_local_date = _local_calendar_date(exit_time_raw)
+                exit_time = parse_time(exit_time_raw)
+                exit_local_date = local_calendar_date(exit_time_raw)
             except ValueError as exc:
                 if not is_direct_net_pnl:
                     skipped += 1
@@ -782,9 +851,9 @@ def load_trades(
         market = infer_market(symbol, market_hint)
         parsed_side = _parse_side(get(row, "side"))
 
-        entry_price_raw = _to_float(get(row, "entry_price"), None)
-        exit_price_raw = _to_float(get(row, "exit_price"), None)
-        quantity_raw = _to_float(get(row, "quantity"), None)
+        entry_price_raw = to_float(get(row, "entry_price"), None)
+        exit_price_raw = to_float(get(row, "exit_price"), None)
+        quantity_raw = to_float(get(row, "quantity"), None)
 
         # 契約乘數只屬於台灣期貨/選擇權。使用者若明示其他市場，代號即使
         # 剛好長得像 TXF/TXO 也不可套用台期乘數，否則損益會被放大 50~200 倍。
@@ -868,7 +937,7 @@ def load_trades(
             if fees_raw is None or str(fees_raw).strip() in ("", "-", "—"):
                 continue
             provided_fee_columns.add(fee_column)
-            parsed_fee = _to_float(fees_raw, None)
+            parsed_fee = to_float(fees_raw, None)
             fee_units = {unit for unit in _money_units(fees_raw) if unit}
             # 成本幣別與這列損益幣別(或其他成本分項)不同時不可相加：用錯單位
             # 扣出來的「淨損益」比完全不扣更假，且會被當成同一幣別報出去。
@@ -924,8 +993,8 @@ def load_trades(
             pnl -= fees
             gross_pnl_adjusted_count += 1
         raw_currency = get(row, "pnl_currency")
-        field_currency = _normalize_currency(raw_currency)
-        amount_currency = _currency_from_amount(pnl_raw)
+        field_currency = normalize_currency(raw_currency)
+        amount_currency = currency_from_amount(pnl_raw)
         if (
             raw_currency is not None
             and str(raw_currency).strip() not in ("", "-", "—")
